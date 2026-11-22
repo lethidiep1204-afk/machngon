@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {
   DailyQuote,
@@ -38,7 +39,10 @@ interface PersistedQuoteState {
   lastDisplayedQuoteId: string | null;
 }
 
-const DEFAULT_STORE_PATH = path.resolve(process.cwd(), 'data', 'machngon-quotes-state.json');
+const DEFAULT_DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'machngon-data')
+  : path.resolve(process.cwd(), 'data');
+const DEFAULT_STORE_PATH = path.join(DEFAULT_DATA_DIR, 'machngon-quotes-state.json');
 
 /**
  * Returns the calendar date string (YYYY-MM-DD) in Asia/Ho_Chi_Minh (UTC+7).

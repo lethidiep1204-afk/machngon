@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
 
@@ -15,7 +16,10 @@ interface AdminTokenPayload {
   exp: number;
 }
 
-const DEFAULT_AUTH_PATH = path.resolve(process.cwd(), 'data', 'machngon-admin-auth.json');
+const DEFAULT_DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'machngon-data')
+  : path.resolve(process.cwd(), 'data');
+const DEFAULT_AUTH_PATH = path.join(DEFAULT_DATA_DIR, 'machngon-admin-auth.json');
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const EPHEMERAL_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
 
