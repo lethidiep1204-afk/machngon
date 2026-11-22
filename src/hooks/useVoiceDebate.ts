@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { normalizeVietnamese } from '../lib/vietnamese';
 
 interface SpeechRecognitionAlternativeLike {
   transcript: string;
@@ -49,6 +50,15 @@ declare global {
   }
 }
 
+export type VoiceDebatePhase =
+  | 'idle'
+  | 'user_listening'
+  | 'ai_thinking'
+  | 'ai_speaking'
+  | 'cooldown';
+
+const POST_TTS_COOLDOWN_MS = 750;
+
 /**
  * Strips Markdown formatting tokens (*, **, #, backticks, bullets, links)
  * so Vietnamese Text-to-Speech reads naturally without pronouncing punctuation artifacts.
@@ -72,6 +82,45 @@ export function stripMarkdownForSpeech(rawText: string): string {
     .trim();
 }
 
+/**
+ * Acoustic echo guard: determines if a newly recognized STT transcript is likely
+ * feedback/echo picked up from the AI's own TTS speaker output.
+ */
+export function isLikelyAiEcho(transcript: string, lastSpokenText: string): boolean {
+  const normTranscript = normalizeVietnamese(transcript)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normSpoken = normalizeVietnamese(lastSpokenText)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normTranscript || !normSpoken || normTranscript.length < 8) {
+    return false;
+  }
+
+  // Exact substring match of a meaningful phrase (>= 12 chars) inside AI's last speech
+  if (normTranscript.length >= 12 && normSpoken.includes(normTranscript)) {
+    return true;
+  }
+
+  const transcriptWords = normTranscript.split(' ').filter((w) => w.length >= 2);
+  const spokenWordSet = new Set(normSpoken.split(' ').filter((w) => w.length >= 2));
+
+  if (transcriptWords.length < 3 || spokenWordSet.size === 0) {
+    return false;
+  }
+
+  let matched = 0;
+  for (const word of transcriptWords) {
+    if (spokenWordSet.has(word)) matched += 1;
+  }
+
+  const containmentRatio = matched / transcriptWords.length;
+  return containmentRatio >= 0.72;
+}
+
 function selectBestVietnameseVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices || voices.length === 0) return null;
   const viVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('vi'));
@@ -89,6 +138,8 @@ function selectBestVietnameseVoice(voices: SpeechSynthesisVoice[]): SpeechSynthe
 export interface UseVoiceDebateOptions {
   /** Base text currently in composer before recording starts */
   baseText: string;
+  /** Whether AI is currently processing a turn (locks mic in hands-free mode) */
+  isAiBusy?: boolean;
   /** Called continuously as interim and final speech recognition results arrive */
   onTranscriptChange: (nextText: string) => void;
   /** Called when speech finishes and hands-free auto-submit should trigger */
@@ -105,9 +156,10 @@ export interface UseVoiceDebateReturn {
   isSpeaking: boolean;
   speakingMessageId: string | null;
   handsFreeMode: boolean;
+  voicePhase: VoiceDebatePhase;
   setHandsFreeMode: (enabled: boolean) => void;
   toggleHandsFreeMode: () => void;
-  startListening: (options?: { clearBeforeStart?: boolean }) => void;
+  startListening: (options?: { clearBeforeStart?: boolean; forceInterruptTts?: boolean }) => void;
   stopListening: () => void;
   toggleListening: () => void;
   speakText: (text: string, messageId?: string, onComplete?: () => void) => void;
@@ -116,6 +168,7 @@ export interface UseVoiceDebateReturn {
 
 export function useVoiceDebate({
   baseText,
+  isAiBusy = false,
   onTranscriptChange,
   onAutoSubmit,
   onNotify,
@@ -125,6 +178,7 @@ export function useVoiceDebate({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [handsFreeMode, setHandsFreeModeState] = useState(false);
+  const [isCoolingDown, setIsCoolingDown] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -133,6 +187,11 @@ export function useVoiceDebate({
   const accumulatedFinalRef = useRef('');
   const latestComposedRef = useRef('');
   const handsFreeRef = useRef(handsFreeMode);
+  const isSpeakingRef = useRef(false);
+  const isCoolingDownRef = useRef(false);
+  const lastSpokenTextRef = useRef('');
+  const lastSpokenEndedAtRef = useRef(0);
+  const cooldownTimerRef = useRef<number | null>(null);
   const onTranscriptChangeRef = useRef(onTranscriptChange);
   const onAutoSubmitRef = useRef(onAutoSubmit);
   const onNotifyRef = useRef(onNotify);
@@ -167,7 +226,6 @@ export function useVoiceDebate({
     typeof window.speechSynthesis !== 'undefined' &&
     typeof window.SpeechSynthesisUtterance !== 'undefined';
 
-  // Load available browser TTS voices (Chrome/Edge populate asynchronously)
   useEffect(() => {
     if (!ttsSupported) return;
     const synth = window.speechSynthesis;
@@ -182,9 +240,18 @@ export function useVoiceDebate({
     };
   }, [ttsSupported]);
 
-  // Clean up speech recognition and TTS on unmount
+  const clearCooldown = useCallback(() => {
+    if (cooldownTimerRef.current !== null) {
+      window.clearTimeout(cooldownTimerRef.current);
+      cooldownTimerRef.current = null;
+    }
+    isCoolingDownRef.current = false;
+    setIsCoolingDown(false);
+  }, []);
+
   useEffect(() => {
     return () => {
+      clearCooldown();
       try {
         recognitionRef.current?.abort();
       } catch {
@@ -198,9 +265,22 @@ export function useVoiceDebate({
         }
       }
     };
+  }, [clearCooldown]);
+
+  const abortMicHard = useCallback(() => {
+    manualStopRef.current = true;
+    try {
+      recognitionRef.current?.abort();
+    } catch {
+      // Ignore abort errors
+    }
+    recognitionRef.current = null;
+    setIsListening(false);
+    setInterimTranscript('');
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    clearCooldown();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       try {
         window.speechSynthesis.cancel();
@@ -208,9 +288,10 @@ export function useVoiceDebate({
         // Ignore cancel errors
       }
     }
+    isSpeakingRef.current = false;
     setIsSpeaking(false);
     setSpeakingMessageId(null);
-  }, []);
+  }, [clearCooldown]);
 
   const stopListening = useCallback(() => {
     manualStopRef.current = true;
@@ -224,7 +305,7 @@ export function useVoiceDebate({
   }, []);
 
   const startListening = useCallback(
-    (options?: { clearBeforeStart?: boolean }) => {
+    (options?: { clearBeforeStart?: boolean; forceInterruptTts?: boolean }) => {
       if (!sttSupported) {
         onNotifyRef.current?.(
           'Trình duyệt hiện tại chưa hỗ trợ nhận diện giọng nói (Web Speech API). Bạn có thể dùng Chrome hoặc Edge mới nhất, hoặc tiếp tục gõ văn bản.',
@@ -233,17 +314,20 @@ export function useVoiceDebate({
         return;
       }
 
-      // Stop TTS before listening so microphone doesn't pick up AI audio
-      stopSpeaking();
+      // Strict anti-echo lock: never open microphone while AI is speaking or cooling down
+      // unless user explicitly clicks the mic button to interrupt AI speech.
+      if ((isSpeakingRef.current || isCoolingDownRef.current) && !options?.forceInterruptTts) {
+        return;
+      }
+
+      if (options?.forceInterruptTts) {
+        stopSpeaking();
+      }
 
       const SpeechCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechCtor) return;
 
-      try {
-        recognitionRef.current?.abort();
-      } catch {
-        // Ignore
-      }
+      abortMicHard();
 
       const recognition = new SpeechCtor();
       recognition.lang = 'vi-VN';
@@ -259,11 +343,20 @@ export function useVoiceDebate({
       latestComposedRef.current = prefixBeforeRecordRef.current;
 
       recognition.onstart = () => {
+        if (isSpeakingRef.current) {
+          abortMicHard();
+          return;
+        }
         setIsListening(true);
         setInterimTranscript('');
       };
 
       recognition.onresult = (event) => {
+        // Hard guard: discard anything captured while TTS is active
+        if (isSpeakingRef.current || isCoolingDownRef.current) {
+          return;
+        }
+
         let finalChunk = '';
         let interimChunk = '';
 
@@ -275,6 +368,17 @@ export function useVoiceDebate({
           } else {
             interimChunk += text;
           }
+        }
+
+        const withinEchoWindow = Date.now() - lastSpokenEndedAtRef.current < 4500;
+        const rawCandidate = `${accumulatedFinalRef.current} ${finalChunk} ${interimChunk}`.trim();
+        if (
+          withinEchoWindow &&
+          lastSpokenTextRef.current &&
+          isLikelyAiEcho(rawCandidate, lastSpokenTextRef.current)
+        ) {
+          // Ignore acoustic echo from speaker
+          return;
         }
 
         if (finalChunk.trim()) {
@@ -317,10 +421,28 @@ export function useVoiceDebate({
         setIsListening(false);
         setInterimTranscript('');
 
+        if (isSpeakingRef.current || manualStopRef.current) {
+          return;
+        }
+
         const spokenText = latestComposedRef.current.trim();
         const hasNewSpeech = accumulatedFinalRef.current.trim().length > 0 || spokenText.length > 0;
 
-        if (handsFreeRef.current && !manualStopRef.current && hasNewSpeech && spokenText) {
+        if (
+          hasNewSpeech &&
+          lastSpokenTextRef.current &&
+          Date.now() - lastSpokenEndedAtRef.current < 5000 &&
+          isLikelyAiEcho(spokenText, lastSpokenTextRef.current)
+        ) {
+          onTranscriptChangeRef.current(prefixBeforeRecordRef.current);
+          onNotifyRef.current?.(
+            'Đã lọc âm vọng từ loa AI để tránh ghi nhầm. Mời bạn nói lại quan điểm của mình.',
+            'info'
+          );
+          return;
+        }
+
+        if (handsFreeRef.current && hasNewSpeech && spokenText) {
           onAutoSubmitRef.current?.(spokenText);
         }
       };
@@ -336,14 +458,14 @@ export function useVoiceDebate({
         );
       }
     },
-    [sttSupported, stopSpeaking]
+    [abortMicHard, stopSpeaking, sttSupported]
   );
 
   const toggleListening = useCallback(() => {
     if (isListening) {
       stopListening();
     } else {
-      startListening();
+      startListening({ forceInterruptTts: true });
     }
   }, [isListening, startListening, stopListening]);
 
@@ -361,11 +483,13 @@ export function useVoiceDebate({
       if (!cleanText) return;
 
       // Toggle off if clicking the same message currently speaking
-      if (isSpeaking && messageId && speakingMessageId === messageId && !onComplete) {
+      if (isSpeakingRef.current && messageId && speakingMessageId === messageId && !onComplete) {
         stopSpeaking();
         return;
       }
 
+      // CRITICAL ANTI-ECHO: Abort microphone BEFORE starting TTS playback
+      abortMicHard();
       stopSpeaking();
 
       const synth = window.speechSynthesis;
@@ -381,30 +505,50 @@ export function useVoiceDebate({
         utterance.lang = viVoice.lang;
       }
 
+      lastSpokenTextRef.current = cleanText;
+      isSpeakingRef.current = true;
+      setIsSpeaking(true);
+      setSpeakingMessageId(messageId ?? '__speech__');
+
       utterance.onstart = () => {
+        abortMicHard();
+        isSpeakingRef.current = true;
         setIsSpeaking(true);
         setSpeakingMessageId(messageId ?? '__speech__');
       };
 
-      utterance.onend = () => {
+      const finishSpeech = (shouldTriggerCallback: boolean) => {
+        isSpeakingRef.current = false;
         setIsSpeaking(false);
         setSpeakingMessageId(null);
-        onComplete?.();
+        lastSpokenEndedAtRef.current = Date.now();
+
+        if (!shouldTriggerCallback) {
+          clearCooldown();
+          return;
+        }
+
+        // Acoustic echo-guard cooldown before reopening microphone
+        isCoolingDownRef.current = true;
+        setIsCoolingDown(true);
+        cooldownTimerRef.current = window.setTimeout(() => {
+          cooldownTimerRef.current = null;
+          isCoolingDownRef.current = false;
+          setIsCoolingDown(false);
+          onComplete?.();
+        }, POST_TTS_COOLDOWN_MS);
       };
 
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        setSpeakingMessageId(null);
-      };
+      utterance.onend = () => finishSpeech(true);
+      utterance.onerror = () => finishSpeech(false);
 
       try {
         synth.speak(utterance);
       } catch {
-        setIsSpeaking(false);
-        setSpeakingMessageId(null);
+        finishSpeech(false);
       }
     },
-    [isSpeaking, speakingMessageId, stopSpeaking, ttsSupported, voices]
+    [abortMicHard, clearCooldown, speakingMessageId, stopSpeaking, ttsSupported, voices]
   );
 
   const setHandsFreeMode = useCallback(
@@ -418,17 +562,27 @@ export function useVoiceDebate({
         return;
       }
       if (!enabled) {
-        stopListening();
+        abortMicHard();
         stopSpeaking();
       }
       setHandsFreeModeState(enabled);
     },
-    [sttSupported, ttsSupported, stopListening, stopSpeaking]
+    [abortMicHard, sttSupported, ttsSupported, stopSpeaking]
   );
 
   const toggleHandsFreeMode = useCallback(() => {
     setHandsFreeMode(!handsFreeRef.current);
   }, [setHandsFreeMode]);
+
+  const voicePhase: VoiceDebatePhase = isSpeaking
+    ? 'ai_speaking'
+    : isCoolingDown
+      ? 'cooldown'
+      : isAiBusy
+        ? 'ai_thinking'
+        : isListening
+          ? 'user_listening'
+          : 'idle';
 
   return {
     sttSupported,
@@ -438,6 +592,7 @@ export function useVoiceDebate({
     isSpeaking,
     speakingMessageId,
     handsFreeMode,
+    voicePhase,
     setHandsFreeMode,
     toggleHandsFreeMode,
     startListening,

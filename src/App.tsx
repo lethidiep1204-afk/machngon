@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
+import { QuickDictionarySuite } from './components/dictionary/QuickDictionarySuite';
 import { PaletteQuickModal } from './components/theme/PaletteQuickModal';
 import { ThemeProvider } from './components/theme/ThemeProvider';
 import { ToastProvider, useToast } from './components/ui/ToastProvider';
@@ -114,6 +115,7 @@ export default function App() {
           <RouterProvider>
             <RouteView />
             <PaletteQuickModal />
+            <QuickDictionarySuite />
           </RouterProvider>
         </AppProvider>
       </ToastProvider>

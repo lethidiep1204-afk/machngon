@@ -1,7 +1,10 @@
 import type {
   DebateStepItem,
+  EvidenceVerification,
   LabApiRequestPayload,
   LabApiResponsePayload,
+  LabAttachment,
+  LabDifficultyLevel,
   LedgerEntry,
   LibraryDocument,
 } from '../types.ts';
@@ -59,9 +62,27 @@ const SUMMARY_MARKERS = [
   'tien bo lap luan',
 ];
 
+const EVIDENCE_CUES = [
+  'theo ',
+  'nghien cuu',
+  'bao cao',
+  'so lieu',
+  'thong ke',
+  'dan chung',
+  'vi du',
+  'trich ',
+  'tai lieu',
+  'khao sat',
+  'nguon',
+  'tac pham',
+  'nam 20',
+  'nam 19',
+  '%',
+];
+
 function stripSpokenVietnameseFillers(rawText: string): string {
   if (!rawText) return '';
-  let cleaned = rawText
+  const cleaned = rawText
     .replace(/\s+/g, ' ')
     .replace(
       /(?<=^|[\s,.;:!?])(?:kiểu\s+như\s+là|kiểu\s+như|thì\s+em\s+thấy\s+là|thì\s+em\s+thấy|thì\s+mình\s+thấy\s+là|thì\s+mình\s+thấy|à\s+mà|nghĩa\s+là|nói\s+chung\s+là|ý\s+em\s+là|ý\s+mình\s+là|thì\s+là|ừm+|ờm+)(?=$|[\s,.;:!?])[\s,]*/giu,
@@ -200,6 +221,64 @@ function buildEverydayExample(message: string, labType: 'concept' | 'debate'): s
     : 'một quy định có lợi cho đa số đôi khi lại gây bất công cho một nhóm nhỏ có hoàn cảnh đặc biệt';
 }
 
+function buildEvidenceVerification(
+  cleanedMessage: string,
+  resourceDoc?: LibraryDocument | null,
+  attachments?: LabAttachment[]
+): EvidenceVerification {
+  const norm = normalizeVietnamese(cleanedMessage);
+  const hasExplicitEvidenceCue = EVIDENCE_CUES.some((cue) => norm.includes(cue));
+  const hasAttachments = Boolean(attachments && attachments.length > 0);
+  const groundedClaims: string[] = [];
+  const unverifiedClaims: string[] = [];
+
+  if (resourceDoc) {
+    groundedClaims.push(`Có điểm tựa đối chiếu từ học liệu AI Library: "${resourceDoc.title}".`);
+  }
+
+  if (hasAttachments && attachments) {
+    const names = attachments.map((a) => a.name).join(', ');
+    groundedClaims.push(`Đã nhận tệp đính kèm làm ngữ cảnh đối chiếu: ${names}.`);
+  }
+
+  if (hasExplicitEvidenceCue) {
+    groundedClaims.push(
+      `Phát biểu có nêu ví dụ/dấu hiệu dẫn chứng cụ thể ("${extractShortSummary(cleanedMessage, 70)}").`
+    );
+  } else {
+    unverifiedClaims.push(
+      `Nhận định "${extractShortSummary(cleanedMessage, 75)}" hiện chủ yếu dựa trên quan điểm cá nhân, chưa có số liệu hay nguồn độc lập.`
+    );
+  }
+
+  if (groundedClaims.length > 0 && unverifiedClaims.length === 0) {
+    return {
+      status: 'verified',
+      groundedClaims,
+      unverifiedClaims: [],
+      warning: null,
+    };
+  }
+
+  if (groundedClaims.length > 0) {
+    return {
+      status: 'partial',
+      groundedClaims,
+      unverifiedClaims,
+      warning:
+        'Bạn đã có một phần bối cảnh tài liệu, nhưng nhận định chính vẫn cần thêm 1 dẫn chứng cụ thể hoặc trích dẫn nguồn kiểm chứng được.',
+    };
+  }
+
+  return {
+    status: 'unverified',
+    groundedClaims: [],
+    unverifiedClaims,
+    warning:
+      'Chưa phát hiện nguồn tài liệu hay số liệu kiểm chứng trong phát biểu này. Hãy bổ sung 1 ví dụ thực tế hoặc đính kèm tài liệu để lập luận đứng vững hơn.',
+  };
+}
+
 function buildThinkingTraceMap(
   labType: 'concept' | 'debate',
   ledger: LedgerEntry[],
@@ -240,7 +319,7 @@ function buildThinkingTraceMap(
       `- **Lập trường & Luận điểm chính:** Khởi đầu từ "${firstClaim}".`,
       `- **Phản đề đã đối diện:** ${counterPoint}`,
       `- **Bước chuyển trong lập luận:** Tinh chỉnh sang "${latestClaim}" và nhận diện giả định ngầm (${keyBoundary}).`,
-      `- **Điểm có thể đào sâu thêm:** Thử tìm 1 dẫn chứng đời thực hoặc trường hợp ngoại lệ mới để tiếp tục kiểm chứng.`,
+      `- **Điểm có thể đào sâu thêm:** Thử tìm 1 dẫn chứng đời thực hoặc nguồn học liệu mới để tiếp tục kiểm chứng.`,
     ].join('\n'),
     guidingQuestion:
       'Nhìn lại chặng đường từ lượt đầu đến bây giờ, lập luận nào khiến bạn thay đổi hoặc củng cố suy nghĩ nhiều nhất?',
@@ -248,11 +327,24 @@ function buildThinkingTraceMap(
   };
 }
 
+function adaptQuestionForDifficulty(
+  baseQuestion: string,
+  difficulty: LabDifficultyLevel
+): string {
+  if (difficulty === 'advanced') {
+    return baseQuestion.includes('tiêu chí') || baseQuestion.includes('điều kiện')
+      ? baseQuestion
+      : `${baseQuestion.replace(/\?$/, '')} — và bạn dựa trên tiêu chí hay nguồn kiểm chứng nào?`;
+  }
+  return baseQuestion;
+}
+
 /**
- * Concise, natural Vietnamese Socratic local fallback engine (~80–130 words per turn):
- * Follows "1 Công nhận + 1 Lỗ hổng/Phản ví dụ + 1 Câu hỏi Socrates duy nhất",
- * strips spoken Vietnamese fillers, syncs with DebateStepper5 (steps 1..5),
- * supports A/B stuck recovery and Bản đồ truy vết tư duy.
+ * Concise, balanced Vietnamese Socratic local fallback engine:
+ * - Produces balanced positivePoints & negativePoints strictly on the user's topic
+ * - Performs explicit evidence verification (grounded vs unverified + warning)
+ * - Adapts rigor to difficulty (basic / intermediate / advanced)
+ * - Ends with exactly 1 focused Socratic question
  */
 export function runLocalFallbackEngine(
   payload: LabApiRequestPayload,
@@ -260,6 +352,7 @@ export function runLocalFallbackEngine(
 ): LabApiResponsePayload {
   const ledger = payload.ledger_snapshot ?? [];
   const history = payload.history ?? [];
+  const difficulty: LabDifficultyLevel = payload.difficulty ?? 'intermediate';
   const rawMessage = payload.message.trim();
   const cleanedMessage = stripSpokenVietnameseFillers(rawMessage);
   const nextUserTurn = ledger.filter((l) => l.speaker === 'user').length + 1;
@@ -279,6 +372,11 @@ export function runLocalFallbackEngine(
 
   const userClaimSummary = extractShortSummary(cleanedMessage, 115);
   const everydayExample = buildEverydayExample(cleanedMessage, payload.lab_type);
+  const evidenceCheck = buildEvidenceVerification(
+    cleanedMessage,
+    resourceDoc,
+    payload.attachments
+  );
 
   let contradictionNote: string | null = null;
   let contradictionRef: string | null = null;
@@ -299,13 +397,19 @@ export function runLocalFallbackEngine(
     }
   }
 
-  const factsSummary = resourceDoc
-    ? `Điểm tựa học liệu: "${resourceDoc.title}" (${resourceDoc.author}) và ý chính bạn vừa nêu ở ${userTurnRef}.`
-    : `Điểm đã có căn cứ: lập trường trực tiếp bạn vừa nêu ở ${userTurnRef} (chưa kèm số liệu hay dẫn chứng độc lập).`;
+  const attachedNames = (payload.attachments ?? []).map((a) => a.name);
+  const factsSummary =
+    attachedNames.length > 0
+      ? `Đã tiếp nhận tệp đính kèm (${attachedNames.join(', ')})${resourceDoc ? ` cùng học liệu "${resourceDoc.title}"` : ''} để đối chiếu với ý chính ở ${userTurnRef}.`
+      : resourceDoc
+        ? `Điểm tựa học liệu: "${resourceDoc.title}" (${resourceDoc.author}) đối chiếu cùng lập trường bạn nêu ở ${userTurnRef}.`
+        : `Điểm đã có căn cứ: lập trường trực tiếp bạn vừa nêu ở ${userTurnRef} (chưa kèm số liệu hay nguồn kiểm chứng độc lập).`;
 
   const assumptionsSummary = `Giả định ngầm cần kiểm chứng: ${newAssumptions[0]}`;
 
   let tldr = '';
+  let positivePoints: string[] = [];
+  let negativePoints: string[] = [];
   let interpretation = '';
   let guidingQuestion = '';
   let questionHint = '';
@@ -319,59 +423,91 @@ export function runLocalFallbackEngine(
       resourceDoc
     );
     tldr = mapData.tldr;
+    positivePoints = ['Bạn đã theo sát mạch lập luận và đối diện trực tiếp với phản biện qua các lượt.'];
+    negativePoints = ['Cần tiếp tục bổ sung dẫn chứng cụ thể cho những kết luận có phạm vi rộng.'];
     interpretation = mapData.interpretation;
     guidingQuestion = mapData.guidingQuestion;
     questionHint = mapData.questionHint;
     aiClaimSummary = 'Tổng kết Bản đồ truy vết tư duy cho toàn bộ phiên học.';
   } else if (stuckTwiceInARow) {
-    tldr = 'Không sao cả, dừng lại ở điểm khó này cho thấy bạn đang chạm đúng nút thắt của vấn đề.';
+    tldr = 'Dừng lại ở điểm khó này cho thấy bạn đang chạm đúng nút thắt của vấn đề.';
+    positivePoints = ['Bạn trung thực nhận diện điểm chưa rõ thay vì đoán mò.'];
+    negativePoints = ['Chưa chốt được tiêu chí so sánh giữa hai hướng tiếp cận chính.'];
     interpretation = [
-      `- **Phương án A (Ưu tiên cá nhân):** Giữ rộng quyền lựa chọn của mỗi người và chỉ đặt giới hạn khi có bằng chứng gây hại trực tiếp (ví dụ: ${everydayExample}).`,
+      `- **Phương án A (Ưu tiên cá nhân):** Giữ rộng quyền lựa chọn và chỉ giới hạn khi có bằng chứng gây hại trực tiếp (ví dụ: ${everydayExample}).`,
       `- **Phương án B (Ưu tiên hài hòa chung):** Đặt một bộ quy tắc tối thiểu để quyền của người này không xâm phạm quyền cơ bản của người khác.`,
     ].join('\n');
     guidingQuestion =
-      'Giữa **Phương án A** và **Phương án B**, bạn thấy hướng nào thuyết phục hơn trong tình huống thực tế và vì sao?';
+      'Giữa **Phương án A** và **Phương án B**, bạn thấy hướng nào thuyết phục hơn và vì sao?';
     questionHint = 'Gợi ý: Chọn A hoặc B rồi nêu 1 lý do gần gũi nhất với bạn.';
-    aiClaimSummary = 'Kích hoạt cơ chế gỡ bí với 2 lựa chọn A/B để học sinh tự phân tích.';
+    aiClaimSummary = 'Kích hoạt cơ chế gỡ bí với 2 lựa chọn A/B để người học tự phân tích.';
   } else if (stuckNow) {
-    tldr = 'Điểm này thực ra rất dễ vướng nếu chỉ nhìn ở mức khái niệm trừu tượng.';
-    interpretation = `- **Mảnh ghép gợi mở:** Thử thu nhỏ câu chuyện về một tình huống cụ thể (phản ví dụ đời thường): ${everydayExample}.`;
+    tldr = 'Điểm này dễ vướng khi chỉ nhìn ở mức khái niệm trừu tượng.';
+    positivePoints = ['Bạn đang dừng lại đúng chỗ cần tách tình huống thực tế.'];
+    negativePoints = ['Cần gắn khái niệm với một bối cảnh đời thực để dễ phân tích hơn.'];
+    interpretation = `- **Mảnh ghép gợi mở:** Thử thu nhỏ câu chuyện về tình huống cụ thể: ${everydayExample}.`;
     guidingQuestion =
-      'Đặt mình vào tình huống đó, bạn sẽ đồng ý hay phản đối hành động kia dựa trên lý do đầu tiên nào?';
-    questionHint = 'Gợi ý: Bắt đầu từ cảm nhận trực giác của bạn rồi nêu 1 lý do ngắn.';
-    aiClaimSummary = 'Cung cấp ví dụ đời thường ngắn để học sinh dễ gỡ nút thắt.';
+      'Đặt mình vào tình huống đó, bạn sẽ đồng ý hay phản đối dựa trên lý do đầu tiên nào?';
+    questionHint = 'Gợi ý: Bắt đầu từ trực giác của bạn rồi nêu 1 lý do ngắn.';
+    aiClaimSummary = 'Cung cấp ví dụ đời thường ngắn để gỡ nút thắt.';
   } else if (mentionsContradiction && referencedEntry) {
-    tldr = `Mình **thừa nhận** và cảm ơn bạn đã soi lại mốc **${referencedEntry.id}** — phản biện đó hoàn toàn xác đáng.`;
-    interpretation = `- **Điều chỉnh cho chặt hơn:** Mình cần thu hẹp lại nhận định ở ${referencedEntry.id} (giới hạn phạm vi áp dụng theo bối cảnh thực tế thay vì nói chung chung) để giữ đúng mạch đối thoại với bạn.`;
+    tldr = `Mình **thừa nhận** điểm bạn vừa đối chiếu tại mốc **${referencedEntry.id}** — nhận xét đó xác đáng.`;
+    positivePoints = [`Bạn theo sát mạch lập luận và chỉ ra đúng điểm cần đối chiếu ở ${referencedEntry.id}.`];
+    negativePoints = ['Hai bên vẫn cần xác định rõ điều kiện áp dụng để tránh hiểu rộng quá mức.'];
+    interpretation = `- **Điều chỉnh phạm vi:** Cần thu hẹp lại nhận định ở ${referencedEntry.id} theo bối cảnh thực tế thay vì phát biểu chung chung.`;
     guidingQuestion =
-      'Sau khi thu hẹp điều kiện như vậy, bạn thấy điểm nào trong lập luận của chúng ta vẫn còn lỗ hổng cần kiểm chứng tiếp?';
+      'Sau khi thu hẹp điều kiện như vậy, bạn thấy điểm nào trong lập luận của chúng ta vẫn còn lỗ hổng?';
     questionHint = 'Gợi ý: Chỉ ra 1 ngoại lệ khiến nguyên tắc mới vẫn có thể gãy.';
     aiClaimSummary = `Thừa nhận và điều chỉnh phạm vi lập luận tại mốc ${referencedEntry.id}.`;
   } else if (absoluteClaims.length > 0) {
     const markerLabel = absoluteClaims.map((w) => `"${w}"`).join(', ');
-    tldr = `Bạn nêu lập trường rất rõ ràng và dứt khoát ở ${userTurnRef}.`;
-    interpretation = `- **Điểm hở do tuyệt đối hóa (${markerLabel}):** Khi khẳng định không chừa ngoại lệ, chỉ cần 1 tình huống đời thường ngược lại là lập luận dễ bị bẻ gãy (ví dụ: ${everydayExample}).`;
-    guidingQuestion = `Nếu bỏ từ ${markerLabel} đi, bạn sẽ thêm **điều kiện cụ thể nào** để lập luận của mình đứng vững hơn?`;
+    tldr = `Bạn nêu lập trường dứt khoát ở ${userTurnRef} về **${extractShortSummary(cleanedMessage, 58)}**.`;
+    positivePoints = [
+      `Lập trường ở ${userTurnRef} rõ ràng, dễ xác định hướng bảo vệ ngay từ đầu.`,
+    ];
+    negativePoints = [
+      `Cách dùng từ tuyệt đối (${markerLabel}) khiến lập luận dễ gãy chỉ cần gặp 1 ngoại lệ thực tế.`,
+      evidenceCheck.status === 'unverified'
+        ? 'Chưa kèm bằng chứng cụ thể để chứng minh tính đúng đắn trong mọi trường hợp.'
+        : 'Cần thu hẹp phạm vi áp dụng cho khớp với dẫn chứng hiện có.',
+    ];
+    interpretation = `- **Điểm hở do tuyệt đối hóa (${markerLabel}):** Khi khẳng định không chừa ngoại lệ, chỉ cần 1 tình huống ngược lại là lập luận lung lay (ví dụ: ${everydayExample}).`;
+    guidingQuestion = adaptQuestionForDifficulty(
+      `Nếu bỏ từ ${markerLabel} đi, bạn sẽ thêm **điều kiện cụ thể nào** để lập luận này đứng vững hơn?`,
+      difficulty
+    );
     questionHint = 'Gợi ý: Dùng mẫu "Điều này đúng trong trường hợp..., trừ khi...".';
     aiClaimSummary = `Chỉ ra điểm hở do khẳng định tuyệt đối (${markerLabel}) kèm phản ví dụ.`;
   } else if (payload.lab_type === 'concept') {
     if (nextUserTurn === 1) {
-      tldr = `Cách diễn đạt của bạn đã chạm đúng một phần lõi của khái niệm (**${extractShortSummary(cleanedMessage, 55)}**).`;
-      interpretation = `- **Thử ranh giới bằng tình huống biên (phản ví dụ):** Hãy thử đặt cách hiểu này vào đời sống: ${everydayExample}.`;
-      guidingQuestion =
-        'Trong tình huống vừa nêu, cách hiểu ban đầu của bạn vẫn giữ nguyên hay cần thêm một ranh giới phân biệt rõ hơn?';
+      tldr = `Cách diễn đạt của bạn đã chạm đúng hạt nhân đầu tiên: **${extractShortSummary(cleanedMessage, 58)}**.`;
+      positivePoints = ['Bạn tự diễn đạt khái niệm bằng lời riêng thay vì chép định nghĩa sách giáo khoa.'];
+      negativePoints = [
+        'Ranh giới giữa khái niệm này với các trường hợp ngoại lệ chưa được nêu rõ.',
+      ];
+      interpretation = `- **Thử ranh giới bằng tình huống biên:** Hãy đặt cách hiểu này vào đời sống: ${everydayExample}.`;
+      guidingQuestion = adaptQuestionForDifficulty(
+        'Trong tình huống vừa nêu, cách hiểu ban đầu của bạn vẫn giữ nguyên hay cần thêm ranh giới phân biệt rõ hơn?',
+        difficulty
+      );
       questionHint = 'Gợi ý: Nêu 1 điều kiện bắt buộc để phân biệt đúng bản chất khái niệm.';
       aiClaimSummary = 'Ghi nhận phần lõi khái niệm và kiểm thử ranh giới bằng phản ví dụ.';
     } else if (nextUserTurn === 2) {
       tldr = 'Bạn đã bắt đầu tách rõ hơn đặc điểm cốt lõi thay vì định nghĩa chung chung.';
+      positivePoints = ['Biết bổ sung điều kiện cụ thể để làm rõ phạm vi khái niệm.'];
+      negativePoints = [`Vẫn còn giả định ngầm chưa kiểm chứng: ${newAssumptions[0]}`];
       interpretation = `- **Giả định ngầm cần soi kỹ:** Cách hiểu này vẫn đang dựa trên một điều mặc định (${newAssumptions[0]}).`;
-      guidingQuestion =
-        'Nếu đặt khái niệm này cạnh một khái niệm gần nghĩa dễ nhầm, **một dấu hiệu duy nhất** nào giúp bạn phân biệt dứt khoát hai bên?';
+      guidingQuestion = adaptQuestionForDifficulty(
+        'Nếu đặt khái niệm này cạnh một khái niệm gần nghĩa dễ nhầm, **một dấu hiệu duy nhất** nào giúp bạn phân biệt dứt khoát hai bên?',
+        difficulty
+      );
       questionHint = 'Gợi ý: So sánh mục đích hoặc hệ quả thực tế của hai khái niệm.';
       aiClaimSummary = 'Soi giả định ngầm và mời phân biệt với khái niệm gần nghĩa.';
     } else {
       tldr = 'Định nghĩa của bạn đã sắc nét và có ranh giới rõ ràng hơn hẳn lượt đầu.';
-      interpretation = `- **Kiểm tra lần cuối:** Điều kiện bạn vừa thêm giúp loại bỏ nhiều trường hợp mơ hồ (tính nhất quán của khái niệm trong nhiều hoàn cảnh khác nhau).`;
+      positivePoints = ['Định nghĩa nhất quán hơn và đã loại bỏ được nhiều trường hợp mơ hồ.'];
+      negativePoints = ['Cần thử áp dụng vào một tình huống mới để chắc chắn không còn điểm hở.'];
+      interpretation = `- **Kiểm tra tính nhất quán:** Điều kiện bạn vừa thêm giúp giữ vững bản chất khái niệm khi chuyển sang bối cảnh khác.`;
       guidingQuestion =
         'Bạn có muốn chốt lại định nghĩa hoàn chỉnh trong 1 câu ngắn để mình lập **Bản đồ truy vết tư duy** không?';
       questionHint = 'Gợi ý: Viết lại định nghĩa trọn vẹn hoặc bấm "Tổng kết · Bản đồ tư duy".';
@@ -380,33 +516,52 @@ export function runLocalFallbackEngine(
   } else {
     // Debate Lab synchronized with 5 stages
     if (nextUserTurn === 1) {
-      tldr = `Bạn đã chốt được lập trường rõ ràng ở lượt đầu (**${extractShortSummary(cleanedMessage, 58)}**).`;
-      interpretation = `- **Giả định ngầm cần làm rõ:** Lập trường này đang mặc định rằng **${newAssumptions[0]}** (tiền đề chưa được kiểm chứng bằng dẫn chứng cụ thể).`;
-      guidingQuestion =
-        'Bằng chứng hoặc ví dụ thực tế nào khiến bạn tin tưởng nhất vào lập trường vừa nêu?';
-      questionHint = 'Gợi ý: Nêu 1 trải nghiệm thực tế ở trường học hoặc đời sống.';
-      aiClaimSummary = 'Ghi nhận lập trường ban đầu và hỏi bằng chứng nền tảng.';
+      tldr = `Bạn chốt được lập trường trực diện về **${extractShortSummary(cleanedMessage, 58)}**.`;
+      positivePoints = ['Nêu rõ quan điểm ngay ở lượt đầu, đi thẳng vào trọng tâm chủ đề.'];
+      negativePoints = [
+        `Đang dựa trên giả định ngầm: ${newAssumptions[0]}`,
+        evidenceCheck.status === 'unverified'
+          ? 'Chưa đưa dẫn chứng thực tế hoặc nguồn kiểm chứng đi kèm.'
+          : 'Cần kết nối chặt hơn giữa dẫn chứng và kết luận.',
+      ];
+      interpretation = `- **Giả định ngầm cần kiểm tra:** Lập trường này đang mặc định rằng **${newAssumptions[0]}** — nếu tiền đề này thay đổi, kết luận sẽ lung lay.`;
+      guidingQuestion = adaptQuestionForDifficulty(
+        'Bằng chứng hoặc ví dụ thực tế nào khiến bạn tin tưởng nhất vào lập trường vừa nêu?',
+        difficulty
+      );
+      questionHint = 'Gợi ý: Nêu 1 dẫn chứng cụ thể từ đời sống hoặc tài liệu.';
+      aiClaimSummary = 'Ghi nhận lập trường ban đầu, nêu điểm mạnh/yếu và hỏi bằng chứng nền tảng.';
     } else if (nextUserTurn === 2) {
-      tldr = 'Lý lẽ bạn vừa bổ sung giúp lập trường có cơ sở cụ thể hơn hẳn.';
-      interpretation = `- **Phản ví dụ thử thách (góc nhìn trái chiều):** Tuy nhiên, hãy thử đặt lập luận này vào tình huống thực tế sau: ${everydayExample}.`;
-      guidingQuestion =
-        'Trước phản ví dụ đó, bạn sẽ bảo vệ quan điểm ban đầu bằng cách nào hay cần điều chỉnh giới hạn của nó?';
+      tldr = 'Lý lẽ bạn vừa bổ sung giúp lập trường có chiều sâu và rõ cơ sở hơn.';
+      positivePoints = ['Chủ động củng cố lập luận bằng lý lẽ gắn với chủ đề đang tranh biện.'];
+      negativePoints = ['Chưa xét đến tình huống ngoại lệ khi nguyên tắc này va chạm lợi ích khác.'];
+      interpretation = `- **Phản ví dụ thử thách:** Hãy đặt lập luận vừa nêu vào tình huống thực tế sau: ${everydayExample}.`;
+      guidingQuestion = adaptQuestionForDifficulty(
+        'Trước phản ví dụ đó, bạn sẽ bảo vệ quan điểm ban đầu bằng cách nào hay cần điều chỉnh giới hạn của nó?',
+        difficulty
+      );
       questionHint = 'Gợi ý: Bảo vệ bằng nguyên tắc sâu hơn hoặc thêm ngoại lệ hợp lý.';
-      aiClaimSummary = 'Đưa 1 phản ví dụ đời thường để kiểm thử độ bền của lập luận.';
+      aiClaimSummary = 'Đưa 1 phản ví dụ đời thường sát chủ đề để kiểm thử độ bền lập luận.';
     } else if (nextUserTurn === 3) {
-      tldr = 'Bạn đã đối diện trực diện với phản ví dụ thay vì né tránh — đó là điểm mạnh khi tranh biện.';
-      interpretation = `- **Điểm cần siết chặt:** Để lập trường không bị phản bác ngược, cần làm rõ **tiêu chí ranh giới** (khi nào nguyên tắc của bạn áp dụng và khi nào nên có ngoại lệ).`;
-      guidingQuestion =
-        'Nếu một người phản đối hỏi "vậy đâu là giới hạn cụ thể?", bạn sẽ đặt ra **1 tiêu chí rõ ràng** nào?';
-      questionHint = 'Gợi ý: Nêu 1 nguyên tắc dễ kiểm chứng thay vì nói chung chung.';
-      aiClaimSummary = 'Hỗ trợ học sinh điều chỉnh ranh giới và tiêu chí của lập trường.';
+      tldr = 'Bạn đối diện trực diện với phản ví dụ thay vì né tránh — đó là điểm mạnh khi tranh biện.';
+      positivePoints = ['Biết tiếp thu phản ví dụ và điều chỉnh lập luận có kiểm soát.'];
+      negativePoints = ['Vẫn cần chốt một tiêu chí ranh giới đo lường được thay vì nêu nguyên tắc chung.'];
+      interpretation = `- **Điểm cần siết chặt:** Để lập trường không bị phản bác ngược, cần làm rõ **tiêu chí ranh giới** (khi nào áp dụng và khi nào có ngoại lệ).`;
+      guidingQuestion = adaptQuestionForDifficulty(
+        'Nếu người phản đối hỏi "đâu là giới hạn cụ thể?", bạn sẽ đặt ra **1 tiêu chí rõ ràng** nào?',
+        difficulty
+      );
+      questionHint = 'Gợi ý: Nêu 1 tiêu chí dễ kiểm chứng thay vì nói chung chung.';
+      aiClaimSummary = 'Hỗ trợ siết chặt ranh giới và tiêu chí của lập trường.';
     } else {
       tldr = 'Lập luận của bạn qua các lượt đã chuyển từ cảm tính sang có điều kiện và căn cứ rõ ràng hơn.';
-      interpretation = `- **Đối chiếu chặng đường:** Bạn đã giữ được ý lõi từ U#1 nhưng biết thêm giới hạn hợp lý (tư duy phản biện cân bằng giữa nguyên tắc và ngoại lệ thực tế).`;
+      positivePoints = ['Giữ được mạch nhất quán từ U#1 đồng thời biết đặt giới hạn hợp lý.'];
+      negativePoints = ['Nên đối chiếu thêm 1 nguồn độc lập nếu muốn mở rộng thành bài nghị luận hoàn chỉnh.'];
+      interpretation = `- **Đối chiếu chặng đường:** Bạn đã cân bằng tốt hơn giữa nguyên tắc cốt lõi và ngoại lệ thực tế.`;
       guidingQuestion =
         'Bạn muốn tự chốt kết luận cuối cùng trong 1–2 câu để mình tổng kết so sánh tiến bộ cho phiên tranh biện này chứ?';
       questionHint = 'Gợi ý: Tóm tắt quan điểm sau cùng hoặc yêu cầu tổng kết phiên.';
-      aiClaimSummary = 'Ghi nhận bước tiến lập luận và mời học sinh tự rút kết luận cuối.';
+      aiClaimSummary = 'Ghi nhận bước tiến lập luận và mời rút kết luận cuối.';
     }
   }
 
@@ -421,7 +576,7 @@ export function runLocalFallbackEngine(
       key: 'analyze',
       title: 'Analyze',
       vietnameseTitle: 'Giả định & bằng chứng',
-      summary: `Kiểm tra căn cứ và tách giả định ngầm: ${newAssumptions[0]}`,
+      summary: `Kiểm chứng nguồn (${evidenceCheck.status}) và tách giả định ngầm: ${newAssumptions[0]}`,
     },
     {
       key: 'challenge',
@@ -430,7 +585,7 @@ export function runLocalFallbackEngine(
       summary:
         absoluteClaims.length > 0
           ? `Soi điểm hở từ lối khẳng định tuyệt đối (${absoluteClaims.join(', ')}) bằng phản ví dụ thực tế.`
-          : `Đưa tình huống đời thường (${extractShortSummary(everydayExample, 70)}) để thử độ bền lập luận.`,
+          : `Đưa tình huống thực tế (${extractShortSummary(everydayExample, 70)}) để thử độ bền lập luận.`,
     },
     {
       key: 'synthesize',
@@ -446,7 +601,7 @@ export function runLocalFallbackEngine(
       key: 'respond',
       title: 'Respond',
       vietnameseTitle: 'Tổng kết & gợi mở',
-      summary: `Hoàn thiện phản hồi gọn theo công thức 1 Công nhận + 1 Lỗ hổng + 1 Câu hỏi Socrates duy nhất.`,
+      summary: `Đánh giá cân bằng hai chiều kèm 1 câu hỏi Socrates trọng tâm ở mức ${difficulty}.`,
     },
   ];
 
@@ -463,11 +618,14 @@ export function runLocalFallbackEngine(
     debate_steps: debateSteps,
     three_layer: {
       tldr,
+      positivePoints,
+      negativePoints,
       facts: factsSummary,
       assumptions: assumptionsSummary,
       interpretation,
       guidingQuestion,
       questionHint,
+      evidenceCheck,
     },
   };
 }

@@ -1,5 +1,9 @@
+import { formatAttachmentsContextSummary } from './attachments.ts';
+import { getLabDifficultyLabel } from '../library/validation.ts';
 import type {
   DebateStepItem,
+  EvidenceVerification,
+  EvidenceVerificationStatus,
   LabApiRequestPayload,
   ThreeLayerResponse,
 } from '../types.ts';
@@ -32,13 +36,46 @@ export const GEMINI_LAB_RESPONSE_SCHEMA = {
       type: 'OBJECT',
       properties: {
         tldr: { type: 'STRING' },
+        positive_points: {
+          type: 'ARRAY',
+          items: { type: 'STRING' },
+        },
+        negative_points: {
+          type: 'ARRAY',
+          items: { type: 'STRING' },
+        },
         facts: { type: 'STRING' },
         assumptions: { type: 'STRING' },
         interpretation: { type: 'STRING' },
         guidingQuestion: { type: 'STRING' },
         questionHint: { type: 'STRING' },
+        evidence_check: {
+          type: 'OBJECT',
+          properties: {
+            status: { type: 'STRING' },
+            grounded_claims: {
+              type: 'ARRAY',
+              items: { type: 'STRING' },
+            },
+            unverified_claims: {
+              type: 'ARRAY',
+              items: { type: 'STRING' },
+            },
+            warning: { type: 'STRING', nullable: true },
+          },
+          required: ['status', 'grounded_claims', 'unverified_claims'],
+        },
       },
-      required: ['tldr', 'facts', 'assumptions', 'interpretation', 'guidingQuestion'],
+      required: [
+        'tldr',
+        'positive_points',
+        'negative_points',
+        'facts',
+        'assumptions',
+        'interpretation',
+        'guidingQuestion',
+        'evidence_check',
+      ],
     },
   },
   required: [
@@ -54,29 +91,60 @@ const DEBATE_STAGE_GUIDANCE: Record<number, { label: string; directive: string }
   1: {
     label: 'Bước 1/5 — Xác định lập trường & làm rõ khái niệm cốt lõi',
     directive:
-      'Tập trung ghi nhận lập trường/cách hiểu hiện tại, chốt khái niệm trọng tâm và hỏi đúng 1 câu làm rõ ranh giới khái niệm.',
+      'Ghi nhận điểm hợp lý lẫn giới hạn ban đầu bám sát chủ đề, kiểm tra nguồn dẫn chứng và hỏi đúng 1 câu làm rõ ranh giới khái niệm.',
   },
   2: {
     label: 'Bước 2/5 — Kiểm tra giả định & bằng chứng',
     directive:
-      'Ghi nhận lý lẽ hợp lý, chỉ ra đúng 1 giả định ngầm hoặc điểm thiếu bằng chứng và hỏi đúng 1 câu kiểm chứng căn cứ.',
+      'Đánh giá hai chiều (điểm tích cực + điểm hạn chế), phân tách rõ ý đã có căn cứ và ý chưa có nguồn, rồi hỏi đúng 1 câu kiểm chứng bằng chứng.',
   },
   3: {
     label: 'Bước 3/5 — Đưa phản ví dụ thực tế để thử thách lập luận',
     directive:
-      'Ghi nhận nỗ lực lập luận, đưa đúng 1 phản ví dụ đời thường sắc bén để kiểm thử độ bền và hỏi đúng 1 câu xem lập luận có còn đứng vững không.',
+      'Ghi nhận nỗ lực lập luận, đưa đúng 1 phản ví dụ sát chủ đề để thử độ bền và hỏi đúng 1 câu sắc bén kiểm tra lập trường.',
   },
   4: {
-    label: 'Bước 4/5 — Hỗ trợ học sinh điều chỉnh quan điểm',
+    label: 'Bước 4/5 — Hỗ trợ điều chỉnh quan điểm',
     directive:
-      'Ghi nhận cách học sinh phản hồi trước phản ví dụ, chỉ ra điểm cần siết chặt điều kiện áp dụng và hỏi đúng 1 câu giúp họ hoàn thiện lập trường.',
+      'Ghi nhận cách phản hồi trước phản ví dụ, chỉ rõ điểm cần siết chặt điều kiện áp dụng và hỏi đúng 1 câu giúp hoàn thiện lập trường.',
   },
   5: {
     label: 'Bước 5/5 — Tổng kết so sánh sự tiến bộ lập luận',
     directive:
-      'Tổng kết đối chiếu giữa lập trường ban đầu (U#1) và kết luận hiện tại theo Bản đồ truy vết tư duy, kết bằng đúng 1 câu hỏi mở nhẹ để đào sâu tiếp.',
+      'Tổng kết đối chiếu giữa lập trường ban đầu (U#1) và kết luận hiện tại theo Bản đồ truy vết tư duy, kết bằng đúng 1 câu hỏi mở gọn.',
   },
 };
+
+/**
+ * Safely strips `<think>...</think>` blocks and markdown code fences, then slices
+ * from the first `{` to the last `}` before parsing JSON.
+ */
+export function extractCleanJson(rawText: string): Record<string, unknown> {
+  if (typeof rawText !== 'string' || !rawText.trim()) {
+    throw new Error('EMPTY_JSON_RESPONSE');
+  }
+
+  let cleaned = rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/```(?:json)?/gi, '')
+    .replace(/```/g, '')
+    .trim();
+
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    throw new Error('INVALID_JSON_OBJECT_RESPONSE');
+  }
+
+  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  const parsed = JSON.parse(cleaned);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('INVALID_JSON_OBJECT_RESPONSE');
+  }
+
+  return parsed as Record<string, unknown>;
+}
 
 /**
  * Removes common Vietnamese spoken-language filler phrases (e.g. from Voice STT)
@@ -87,7 +155,7 @@ export function cleanSpokenVietnameseFillers(rawText: string): string {
   let cleaned = rawText.replace(/\s+/g, ' ').trim();
 
   const fillerPatterns: RegExp[] = [
-    /\b(?:kiểu\s+như\s+là|kiểu\s+như|thì\s+em\s+thấy\s+là|thì\s+em\s+thấy|thì\s+mình\s+thấy\s+là|thì\s+mình\s+thấy|à\s+mà|nghĩa\s+là|nói\s+chung\s+là|ý\s+em\s+là|ý\s+mình\s+là|thì\s+là|ừm+|ờm+|à+)\b[\s,]*/giu,
+    /(?<=^|[\s,.;:!?])(?:kiểu\s+như\s+là|kiểu\s+như|thì\s+em\s+thấy\s+là|thì\s+em\s+thấy|thì\s+mình\s+thấy\s+là|thì\s+mình\s+thấy|à\s+mà|nghĩa\s+là|nói\s+chung\s+là|ý\s+em\s+là|ý\s+mình\s+là|thì\s+là|ừm+|ờm+)(?=$|[\s,.;:!?])[\s,]*/giu,
   ];
 
   for (const pattern of fillerPatterns) {
@@ -175,25 +243,26 @@ export function buildConversationContextPrompt(payload: LabApiRequestPayload): s
   const currentStage = computeDebateStage(userTurnCount, summaryRequested);
   const stageMeta = DEBATE_STAGE_GUIDANCE[currentStage];
   const cleanedMessage = cleanSpokenVietnameseFillers(payload.message);
+  const difficultyLabel = getLabDifficultyLabel(payload.difficulty);
 
   parts.push(
-    `TRẠNG THÁI PHIÊN: Chế độ ${payload.lab_type === 'concept' ? 'Concept Lab (Khám phá khái niệm)' : 'Debate Lab (Tranh biện Socrates)'} · Lượt học sinh thứ ${userTurnCount} · ${stageMeta.label}.`
+    `TRẠNG THÁI PHIÊN: Chế độ ${payload.lab_type === 'concept' ? 'Concept Lab (Khám phá khái niệm)' : 'Debate Lab (Tranh biện Socrates)'} · Cấp độ: ${difficultyLabel} · Lượt học sinh thứ ${userTurnCount} · ${stageMeta.label}.`
   );
   parts.push(`NHỊP DẪN DẮT HIỆN TẠI: ${stageMeta.directive}`);
 
   if (stuckTwiceInARow) {
     parts.push(
-      `TÍN HIỆU GỠ BÍ (BẮT BUỘC): Học sinh đang bí ý tưởng hoặc nói "không biết" liên tiếp 2 lần. Hãy kích hoạt **Cơ chế gỡ bí**: đưa đúng **2 phương án/góc nhìn gợi ý (Phương án A hoặc Phương án B)** thật ngắn gọn để học sinh chọn và giải thích lý do.`
+      `TÍN HIỆU GỠ BÍ (BẮT BUỘC): Người học đang bí ý tưởng liên tiếp 2 lần. Hãy kích hoạt **Cơ chế gỡ bí**: đưa đúng **2 phương án/góc nhìn gợi ý (Phương án A hoặc Phương án B)** thật ngắn gọn bám sát chủ đề hiện tại để họ chọn và giải thích.`
     );
   } else if (isStuckReply(payload.message)) {
     parts.push(
-      `LƯU Ý ĐỒNG HÀNH: Học sinh vừa bày tỏ chưa nghĩ ra ở lần đầu. Hãy gợi 1 mảnh kiến thức nền ngắn gọn (1–2 câu) kèm 1 ví dụ đời thường rồi hỏi 1 câu thật dễ tiếp cận.`
+      `LƯU Ý ĐỒNG HÀNH: Người học vừa bày tỏ chưa nghĩ ra ở lần đầu. Hãy gợi 1 mảnh kiến thức nền ngắn gọn (1–2 câu) kèm 1 ví dụ đời thường sát chủ đề rồi hỏi 1 câu thật dễ tiếp cận.`
     );
   }
 
   if (summaryRequested) {
     parts.push(
-      `YÊU CẦU TỔNG KẾT PHIÊN HỌC (BẮT BUỘC): Tổng hợp thành **Bản đồ truy vết tư duy** so sánh lập trường/khái niệm ban đầu với bước tiến hiện tại dựa trên Sổ tay lập luận trong trường \`interpretation\`, kết bằng đúng 1 câu hỏi mở nhẹ.`
+      `YÊU CẦU TỔNG KẾT PHIÊN HỌC (BẮT BUỘC): Tổng hợp thành **Bản đồ truy vết tư duy** so sánh lập trường/khái niệm ban đầu với bước tiến hiện tại dựa trên Sổ tay lập luận trong trường \`interpretation\`, kết bằng đúng 1 câu hỏi mở gọn.`
     );
   }
 
@@ -221,16 +290,28 @@ export function buildConversationContextPrompt(payload: LabApiRequestPayload): s
     );
   }
 
+  if (payload.attachments && payload.attachments.length > 0) {
+    parts.push(
+      `TỆP NGƯỜI HỌC ĐÍNH KÈM TRONG LƯỢT NÀY (BẮT BUỘC ĐỌC & ĐỐI CHIẾU DẪN CHỨNG):\n${formatAttachmentsContextSummary(
+        payload.attachments
+      )}`
+    );
+  }
+
   if (cleanedMessage !== payload.message.trim()) {
     parts.push(
-      `PHÁT BIỂU MỚI NHẤT CỦA HỌC SINH (đã lọc từ đệm khẩu ngữ để dễ nắm ý lõi):\n- Nguyên văn: ${payload.message}\n- Ý lõi: ${cleanedMessage}`
+      `PHÁT BIỂU MỚI NHẤT CỦA NGƯỜI HỌC (đã lọc từ đệm khẩu ngữ):\n- Nguyên văn: ${payload.message}\n- Ý lõi: ${cleanedMessage}`
     );
   } else {
-    parts.push(`PHÁT BIỂU MỚI NHẤT CỦA HỌC SINH:\n${payload.message}`);
+    parts.push(`PHÁT BIỂU MỚI NHẤT CỦA NGƯỜI HỌC:\n${payload.message}`);
   }
 
   parts.push(
-    `BẮT BUỘC: Tuân thủ công thức "1 Công nhận (tldr) + 1 Lỗ hổng/Phản ví dụ (interpretation) + 1 Câu hỏi Socrates duy nhất (guidingQuestion)", tổng độ dài phần hiển thị (tldr + interpretation + guidingQuestion) gọn trong 80–130 từ, không hỏi dồn nhiều câu, không chào hỏi sáo rỗng.`
+    `BẮT BUỘC:\n` +
+      `1. Bám chặt đúng chủ đề và câu trả lời mới nhất của người học, không lạc đề, không lan man, không chào hỏi sáo rỗng.\n` +
+      `2. Nêu rõ cả điểm tích cực (\`positive_points\`) lẫn điểm hạn chế/phản biện (\`negative_points\`).\n` +
+      `3. Kiểm tra dẫn chứng/nguồn trong \`evidence_check\` (phân biệt ý có căn cứ với ý chưa có nguồn xác thực, cảnh báo rõ nếu thiếu nguồn).\n` +
+      `4. Kết thúc bằng DUY NHẤT 1 câu hỏi Socrates sắc bén (\`guidingQuestion\`).`
   );
 
   return parts.join('\n\n');
@@ -250,13 +331,15 @@ export function normalizeDebateSteps(steps: DebateStepItem[] | undefined): Debat
   ];
 
   return requiredOrder.map((meta) => {
-    const found = steps?.find((s) => s.key === meta.key);
+    const found = Array.isArray(steps) ? steps.find((s) => s?.key === meta.key) : undefined;
     return {
       key: meta.key,
       title: meta.title,
       vietnameseTitle: meta.vietnameseTitle,
       summary:
-        found?.summary?.trim() || `Hoàn tất bước ${meta.vietnameseTitle} cho lập luận hiện tại.`,
+        typeof found?.summary === 'string' && found.summary.trim()
+          ? found.summary.trim()
+          : `Hoàn tất bước ${meta.vietnameseTitle} cho lập luận hiện tại.`,
     };
   });
 }
@@ -283,26 +366,70 @@ function deriveFallbackTldr(
     : 'Bạn đã nêu được một ý chính rõ ràng để chúng ta cùng kiểm chứng phạm vi áp dụng.';
 }
 
+function toCleanStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+function normalizeEvidenceCheck(raw: unknown): EvidenceVerification | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const rawStatus = typeof obj.status === 'string' ? obj.status.trim().toLowerCase() : 'unverified';
+  const status: EvidenceVerificationStatus =
+    rawStatus === 'verified' || rawStatus === 'partial' || rawStatus === 'unverified'
+      ? rawStatus
+      : 'unverified';
+
+  const groundedClaims = toCleanStringArray(obj.groundedClaims ?? obj.grounded_claims);
+  const unverifiedClaims = toCleanStringArray(obj.unverifiedClaims ?? obj.unverified_claims);
+  const warning =
+    typeof obj.warning === 'string' && obj.warning.trim().length > 0
+      ? obj.warning.trim()
+      : status !== 'verified'
+        ? 'Một số nhận định chưa kèm dẫn chứng hoặc nguồn kiểm chứng cụ thể.'
+        : null;
+
+  return {
+    status,
+    groundedClaims,
+    unverifiedClaims,
+    warning,
+  };
+}
+
 export function normalizeThreeLayer(
-  raw: Partial<ThreeLayerResponse> | undefined,
+  raw: (Partial<ThreeLayerResponse> & Record<string, unknown>) | undefined,
   aiClaimSummary: string
 ): ThreeLayerResponse {
   const facts = typeof raw?.facts === 'string' ? raw.facts.trim() : '';
   const assumptions = typeof raw?.assumptions === 'string' ? raw.assumptions.trim() : '';
   const interpretation = typeof raw?.interpretation === 'string' ? raw.interpretation.trim() : '';
   const guidingQuestion =
-    typeof raw?.guidingQuestion === 'string' ? raw.guidingQuestion.trim() : '';
+    typeof raw?.guidingQuestion === 'string' && raw.guidingQuestion.trim().length > 0
+      ? raw.guidingQuestion.trim()
+      : 'Theo bạn, nếu đặt lập luận này vào một tình huống thực tế trái chiều thì điểm nào cần kiểm chứng trước tiên?';
   const questionHint =
     typeof raw?.questionHint === 'string' && raw.questionHint.trim().length > 0
       ? raw.questionHint.trim()
       : undefined;
 
+  const positivePoints = toCleanStringArray(raw?.positivePoints ?? raw?.positive_points);
+  const negativePoints = toCleanStringArray(raw?.negativePoints ?? raw?.negative_points);
+  const evidenceCheck = normalizeEvidenceCheck(raw?.evidenceCheck ?? raw?.evidence_check);
+
   return {
     tldr: deriveFallbackTldr(raw?.tldr, aiClaimSummary, interpretation),
+    positivePoints: positivePoints.length > 0 ? positivePoints : undefined,
+    negativePoints: negativePoints.length > 0 ? negativePoints : undefined,
     facts,
     assumptions,
     interpretation,
     guidingQuestion,
     questionHint,
+    evidenceCheck,
   };
 }

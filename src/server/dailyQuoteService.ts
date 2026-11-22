@@ -2,9 +2,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  DailyQuote,
+  type DailyQuote,
   QUOTE_CATEGORIES,
-  QuoteCategory,
+  type QuoteCategory,
   VERIFIED_SEED_QUOTES,
 } from '../content/verifiedQuotes.ts';
 

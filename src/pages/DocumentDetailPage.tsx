@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { dispatchQuickExplain } from '../components/dictionary/QuickDictionarySuite';
 import { WorkspaceShell } from '../components/layout/AppShell';
 import {
   ConceptPopoverDialog,
@@ -795,6 +796,19 @@ export function DocumentDetailPage({ documentId }: { documentId: string }) {
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                const selected = selectionPopover.text;
+                setSelectionPopover(null);
+                window.getSelection()?.removeAllRanges();
+                dispatchQuickExplain(selected, doc.title);
+              }}
+              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-[var(--color-primary)]/40 bg-[color-mix(in_srgb,var(--color-primary)_8%,var(--color-surface)_92%)] px-3 py-2 text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-[var(--color-on-primary)] transition-colors cursor-pointer"
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+              Giải thích nhanh nghĩa cụm từ này
+            </button>
             <LibraryToLabActionsMenu
               compact
               onSelectAction={(option) =>
@@ -1037,6 +1051,7 @@ export function DocumentDetailPage({ documentId }: { documentId: string }) {
         {/* Column 2: Center Reading Canvas */}
         <article
           ref={articleRef}
+          data-article-selection-host="true"
           onMouseUp={handleArticleMouseUp}
           className={
             focusMode

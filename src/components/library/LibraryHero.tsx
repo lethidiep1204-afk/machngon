@@ -48,17 +48,17 @@ export function LibraryHero({
         <div className="max-w-3xl">
           <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-gold)]">
             <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
-            Mạch Ngôn Library · Học liệu kiểm chứng
+            Mạch Ngôn AI Library · Học liệu kiểm chứng
           </p>
 
           <h1 className="mt-2.5 font-display lib-scale-hero-title font-bold tracking-tight text-[var(--color-text)]">
-            THƯ VIỆN TRI THỨC
+            AI LIBRARY — THƯ VIỆN TRI THỨC
           </h1>
 
           <p className="mt-3.5 font-reading lib-scale-lead text-[var(--color-text-muted)] max-w-2xl">
-            Khám phá những ý tưởng, khái niệm và góc nhìn giúp bạn hiểu sâu hơn về ngôn ngữ,
-            văn học, triết học, logic và tư duy phản biện — từng bài đọc đều gắn kết trực tiếp
-            với Phòng thí nghiệm Tư duy để bạn đặt câu hỏi và đối thoại.
+            Kho chuyên luận độc lập về ngôn ngữ, văn học, triết học, logic và tư duy phản biện —
+            được phân cấp rõ theo 3 mức Cơ bản, Trung cấp và Nâng cao kèm thuật ngữ tương tác
+            và nguồn tham khảo đã kiểm chứng.
           </p>
 
           {/* Honest, live platform inventory counts (no fake user metrics) */}

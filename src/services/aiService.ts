@@ -1,6 +1,8 @@
+import { toApiAttachments } from '../lib/ai/attachments';
 import { runLocalFallbackEngine } from '../lib/ai/localFallbackEngine';
 import {
   buildConversationContextPrompt,
+  extractCleanJson,
   GEMINI_LAB_RESPONSE_SCHEMA,
   normalizeDebateSteps,
   normalizeThreeLayer,
@@ -9,6 +11,7 @@ import { getSystemPrompt } from '../lib/ai/systemPrompts';
 import type {
   LabApiRequestPayload,
   LabApiResponsePayload,
+  LabAttachment,
   LibraryDocument,
 } from '../lib/types';
 
@@ -21,11 +24,13 @@ export interface GenerateAIRequest {
   prompt?: string;
   systemInstruction?: string;
   history?: GenerateHistoryTurn[];
+  attachments?: ReturnType<typeof toApiAttachments>;
   generationConfig?: {
     temperature?: number;
     topP?: number;
     topK?: number;
     maxOutputTokens?: number;
+    thinkingConfig?: { thinkingBudget: number };
     responseMimeType?: 'application/json' | 'text/plain';
     responseSchema?: Record<string, unknown>;
   };
@@ -40,6 +45,7 @@ export interface GenerateAIResponse {
 export class AIRateLimitError extends Error {
   readonly status = 429;
   readonly retryAfter: number;
+  readonly code = 'QUOTA_EXHAUSTED';
 
   constructor(message: string, retryAfter: number) {
     super(message);
@@ -72,7 +78,7 @@ export async function generateWithAI(request: GenerateAIRequest): Promise<Genera
   });
 
   if (res.status === 429) {
-    const retryHeader = Number(res.headers.get('Retry-After') || '10');
+    const retryHeader = Number(res.headers.get('Retry-After') || '15');
     const body = (await res.json().catch(() => ({}))) as {
       error?: string;
       retry_after?: number;
@@ -81,11 +87,11 @@ export async function generateWithAI(request: GenerateAIRequest): Promise<Genera
       ? Number(body.retry_after)
       : Number.isFinite(retryHeader) && retryHeader > 0
         ? retryHeader
-        : 10;
+        : 15;
 
     throw new AIRateLimitError(
       body.error ||
-        'Hệ thống đang tạm nghỉ nhịp phân tích. Toàn bộ văn bản bạn đang gõ vẫn được bảo toàn nguyên vẹn.',
+        'Đã hết bản thông minh (API AI) hiện tại do chạm giới hạn hạn mức. Toàn bộ văn bản và tệp bạn đang chuẩn bị vẫn được giữ nguyên.',
       seconds
     );
   }
@@ -100,7 +106,7 @@ export async function generateWithAI(request: GenerateAIRequest): Promise<Genera
 
   if (!res.ok) {
     throw new AIServiceError(
-      data.error || 'Kết nối tới máy chủ phân tích bị gián đoạn.',
+      data.error || 'Kết nối tới máy chủ phân tích AI bị gián đoạn.',
       res.status,
       data.code
     );
@@ -121,23 +127,21 @@ export async function generateWithAI(request: GenerateAIRequest): Promise<Genera
   };
 }
 
-function extractJsonObject(rawText: string): Record<string, unknown> {
-  const cleaned = rawText
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-
-  const parsed = JSON.parse(cleaned);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Phản hồi JSON từ AI không đúng cấu trúc.');
-  }
-  return parsed as Record<string, unknown>;
+/**
+ * Explicitly runs the deterministic local fallback engine when the user chooses
+ * to continue offline after seeing a transparent API quota/key notice.
+ */
+export function runLocalLabFallback(
+  payload: LabApiRequestPayload,
+  attachedResource: LibraryDocument | null = null
+): LabApiResponsePayload {
+  return runLocalFallbackEngine(payload, attachedResource);
 }
 
 /**
- * Executes a Thinking Lab (Concept Lab / Debate Lab) turn via the secure /api/generate proxy.
- * Preserves local fallback when GEMINI_API_KEY is not yet configured in local/preview environments.
+ * Executes an AI Labs (Concept Lab / Debate Lab) turn via the secure /api/generate proxy.
+ * Transparently surfaces quota/rate-limit/key errors instead of silently degrading so users
+ * always know whether they are using the Smart API or explicitly choosing Local Fallback.
  */
 export async function requestLabAnalysis(
   payload: LabApiRequestPayload,
@@ -145,8 +149,8 @@ export async function requestLabAnalysis(
 ): Promise<LabApiResponsePayload> {
   if (payload.simulate_429) {
     throw new AIRateLimitError(
-      'Phòng thí nghiệm tư duy đang tạm nghỉ nhịp để giữ chất lượng phân tích. Nội dung bạn đang viết vẫn được bảo toàn nguyên vẹn.',
-      10
+      'Đã hết bản thông minh (API AI) hiện tại do vượt giới hạn hạn mức (HTTP 429). Nội dung và tệp đính kèm của bạn vẫn được giữ nguyên.',
+      12
     );
   }
 
@@ -157,69 +161,65 @@ export async function requestLabAnalysis(
           title: attachedResource.title,
           author: attachedResource.author,
           excerpt: attachedResource.excerpt,
+          source: attachedResource.source,
         }
-      : null
+      : null,
+    null,
+    payload.difficulty ?? 'intermediate'
   );
 
   const prompt = buildConversationContextPrompt(payload);
+  const apiAttachments = toApiAttachments(payload.attachments as LabAttachment[] | undefined);
 
-  try {
-    const aiResponse = await generateWithAI({
-      prompt,
-      systemInstruction,
-      generationConfig: {
-        temperature: 0.7,
-        responseMimeType: 'application/json',
-        responseSchema: GEMINI_LAB_RESPONSE_SCHEMA as unknown as Record<string, unknown>,
-      },
-    });
+  const aiResponse = await generateWithAI({
+    prompt,
+    systemInstruction,
+    attachments: apiAttachments,
+    generationConfig: {
+      temperature: 0.4,
+      maxOutputTokens: 2048,
+      thinkingConfig: { thinkingBudget: 0 },
+      responseMimeType: 'application/json',
+      responseSchema: GEMINI_LAB_RESPONSE_SCHEMA as unknown as Record<string, unknown>,
+    },
+  });
 
-    const parsed = extractJsonObject(aiResponse.text);
-    const aiClaimSummary =
-      typeof parsed.ai_claim_summary === 'string' && parsed.ai_claim_summary.trim()
-        ? parsed.ai_claim_summary.trim()
-        : 'Phản hồi đối thoại Socrates.';
+  const parsed = extractCleanJson(aiResponse.text);
+  const aiClaimSummary =
+    typeof parsed.ai_claim_summary === 'string' && parsed.ai_claim_summary.trim()
+      ? parsed.ai_claim_summary.trim()
+      : 'Phản hồi đối thoại Socrates.';
 
-    const responseId = `resp_gem_${payload.session_id.slice(0, 8)}_${Date.now().toString(36)}`;
+  const responseId = `resp_gem_${payload.session_id.slice(0, 8)}_${Date.now().toString(36)}`;
 
-    return {
-      session_id: payload.session_id,
-      lab_type: payload.lab_type,
-      response_id: responseId,
-      source_engine: 'gemini',
-      user_claim_summary:
-        typeof parsed.user_claim_summary === 'string' && parsed.user_claim_summary.trim()
-          ? parsed.user_claim_summary.trim()
-          : payload.message.slice(0, 120),
-      ai_claim_summary: aiClaimSummary,
-      new_assumptions: Array.isArray(parsed.new_assumptions)
-        ? parsed.new_assumptions.filter((item): item is string => typeof item === 'string')
-        : [],
-      contradiction_note:
-        typeof parsed.contradiction_note === 'string' ? parsed.contradiction_note : null,
-      contradiction_ref:
-        typeof parsed.contradiction_ref === 'string' ? parsed.contradiction_ref : null,
-      debate_steps: normalizeDebateSteps(
-        Array.isArray(parsed.debate_steps) ? (parsed.debate_steps as LabApiResponsePayload['debate_steps']) : undefined
-      ),
-      three_layer: normalizeThreeLayer(
-        parsed.three_layer && typeof parsed.three_layer === 'object'
-          ? (parsed.three_layer as Partial<LabApiResponsePayload['three_layer']>)
-          : undefined,
-        aiClaimSummary
-      ),
-    };
-  } catch (err) {
-    if (err instanceof AIRateLimitError) {
-      throw err;
-    }
-
-    // If the environment hasn't configured GEMINI_API_KEY yet (e.g., local preview),
-    // keep Thinking Lab usable via the deterministic local fallback engine.
-    if (err instanceof AIServiceError && err.code === 'MISSING_API_KEY') {
-      return runLocalFallbackEngine(payload, attachedResource);
-    }
-
-    throw err;
-  }
+  return {
+    session_id: payload.session_id,
+    lab_type: payload.lab_type,
+    response_id: responseId,
+    source_engine: 'gemini',
+    user_claim_summary:
+      typeof parsed.user_claim_summary === 'string' && parsed.user_claim_summary.trim()
+        ? parsed.user_claim_summary.trim()
+        : payload.message.slice(0, 120),
+    ai_claim_summary: aiClaimSummary,
+    new_assumptions: Array.isArray(parsed.new_assumptions)
+      ? parsed.new_assumptions.filter((item): item is string => typeof item === 'string')
+      : [],
+    contradiction_note:
+      typeof parsed.contradiction_note === 'string' ? parsed.contradiction_note : null,
+    contradiction_ref:
+      typeof parsed.contradiction_ref === 'string' ? parsed.contradiction_ref : null,
+    debate_steps: normalizeDebateSteps(
+      Array.isArray(parsed.debate_steps)
+        ? (parsed.debate_steps as LabApiResponsePayload['debate_steps'])
+        : undefined
+    ),
+    three_layer: normalizeThreeLayer(
+      parsed.three_layer && typeof parsed.three_layer === 'object'
+        ? (parsed.three_layer as Partial<LabApiResponsePayload['three_layer']> &
+            Record<string, unknown>)
+        : undefined,
+      aiClaimSummary
+    ),
+  };
 }

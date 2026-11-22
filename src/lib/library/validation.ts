@@ -1,5 +1,10 @@
 import { LEGACY_CATEGORY_MAP } from '../../content/library/categories.ts';
-import type { DocumentBlock, DocumentCategory, LibraryDocument } from '../types.ts';
+import type {
+  DocumentBlock,
+  DocumentCategory,
+  LabDifficultyLevel,
+  LibraryDocument,
+} from '../types.ts';
 
 /**
  * Normalizes legacy or dash-variant category names into canonical Library categories.
@@ -46,12 +51,36 @@ export function isDocumentVerified(doc: LibraryDocument): boolean {
 export function getDifficultyLabel(difficulty?: LibraryDocument['difficulty']): string {
   switch (difficulty) {
     case 'intro':
-      return 'Nhập môn';
+      return 'Cơ bản';
     case 'advanced':
-      return 'Chuyên sâu';
+      return 'Nâng cao';
     case 'explore':
     default:
-      return 'Khám phá';
+      return 'Trung cấp';
+  }
+}
+
+export function getLabDifficultyLabel(difficulty?: LabDifficultyLevel): string {
+  switch (difficulty) {
+    case 'basic':
+      return 'Cơ bản';
+    case 'advanced':
+      return 'Nâng cao';
+    case 'intermediate':
+    default:
+      return 'Trung cấp';
+  }
+}
+
+export function getLabDifficultyDescription(difficulty?: LabDifficultyLevel): string {
+  switch (difficulty) {
+    case 'basic':
+      return 'Ngôn ngữ gần gũi, dẫn dắt từng bước, ưu tiên ví dụ đời thường dễ nắm bắt.';
+    case 'advanced':
+      return 'Phản biện chặt chẽ, soi sâu giả định triết học – logic và yêu cầu dẫn chứng rõ ràng.';
+    case 'intermediate':
+    default:
+      return 'Cân bằng giữa gợi mở tự nhiên và kiểm chứng lập luận, phù hợp luyện tranh biện THPT.';
   }
 }
 

@@ -26,33 +26,33 @@ const HOW_IT_WORKS_STEPS = [
   {
     num: 1,
     icon: BookOpen,
-    title: 'Khám phá tài liệu trong Library',
-    detail: 'Đọc sâu chuyên luận trích dẫn chuẩn xác trong không gian biên tập tĩnh tại.',
+    title: 'Khám phá học liệu trong AI Library',
+    detail: 'Đọc sâu chuyên luận trích dẫn chuẩn xác theo 3 cấp độ Cơ bản, Trung cấp và Nâng cao.',
   },
   {
     num: 2,
     icon: BrainCircuit,
-    title: 'Tương tác với AI trong Thinking Lab',
-    detail: 'Phân tích khái niệm hoặc tranh biện theo quy trình 5 bước và 3 tầng nhận thức.',
+    title: 'Tương tác đối thoại trong AI Labs',
+    detail: 'Phân tích khái niệm hoặc tranh biện Socrates cân bằng hai chiều kèm kiểm chứng nguồn.',
   },
   {
     num: 3,
     icon: Compass,
-    title: 'Phát triển tư duy và xây dựng lập luận',
-    detail: 'Lưu giữ mạch lập luận trong Sổ tay để đối chiếu giả định và hoàn thiện góc nhìn.',
+    title: 'Phát triển tư duy và xuất Báo cáo',
+    detail: 'Lưu giữ Sổ tay mạch lập luận và tổng hợp báo cáo điểm mạnh, điểm yếu sau mỗi phiên.',
   },
 ];
 
 const CORE_VALUES = [
   {
     icon: BookOpen,
-    title: 'Thư viện tri thức (Library)',
-    description: 'Tài liệu chất lượng, được tuyển chọn và biên tập học thuật.',
+    title: 'Kho học liệu (AI Library)',
+    description: 'Tài liệu chọn lọc, phân cấp độ rõ ràng và đối chiếu nguồn học thuật.',
   },
   {
     icon: BrainCircuit,
-    title: 'Phòng thí nghiệm tư duy (Thinking Lab)',
-    description: 'Tương tác AI phản biện sâu sắc, tách bạch dữ kiện và diễn giải.',
+    title: 'Phòng thí nghiệm tư duy (AI Labs)',
+    description: 'Phản biện Socrates đa cấp độ, đính kèm tệp, rảnh tay giọng nói và xuất báo cáo.',
   },
   {
     icon: Gem,
@@ -136,10 +136,10 @@ export function HomePage() {
                       <BookOpen className="h-6 w-6" />
                     </div>
                     <h2 className="mt-4 font-display text-2xl font-bold text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors">
-                      Library
+                      AI Library
                     </h2>
                     <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-muted)]">
-                      Khám phá tri thức qua những chuyên luận chọn lọc về triết học, ngôn ngữ, văn học và lập luận.
+                      Kho học liệu độc lập gồm chuyên luận chọn lọc về triết học, ngôn ngữ, văn học và lập luận theo 3 cấp độ.
                     </p>
                   </div>
                   <div className="mt-6 pt-4 border-t border-[var(--color-border)]/80 flex items-center justify-between gap-2 text-xs">
@@ -147,7 +147,7 @@ export function HomePage() {
                       {publishedDocuments.length} tài liệu tuyển chọn
                     </span>
                     <span className="inline-flex items-center gap-1 font-semibold text-[var(--color-primary)]">
-                      Khám phá
+                      Vào AI Library
                       <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
                     </span>
                   </div>
@@ -169,10 +169,10 @@ export function HomePage() {
                       <BrainCircuit className="h-6 w-6" />
                     </div>
                     <h2 className="mt-4 font-display text-2xl font-bold text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors">
-                      Thinking Lab
+                      AI Labs
                     </h2>
                     <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-muted)]">
-                      Tương tác cùng AI để phân tích khái niệm, phản biện 5 bước và lưu Sổ tay mạch lập luận.
+                      Phòng thí nghiệm tư duy độc lập: phân tích khái niệm, tranh biện rảnh tay, đính kèm tệp và xuất báo cáo.
                     </p>
                   </div>
                   <div className="mt-6 pt-4 border-t border-[var(--color-border)]/80 flex items-center justify-between gap-2 text-xs">
@@ -180,7 +180,7 @@ export function HomePage() {
                       Concept · Debate Lab
                     </span>
                     <span className="inline-flex items-center gap-1 font-semibold text-[var(--color-primary)]">
-                      Mở phòng tư duy
+                      Mở AI Labs
                       <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
                     </span>
                   </div>
@@ -299,7 +299,7 @@ export function HomePage() {
                   to="/library"
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-primary)] hover:underline whitespace-nowrap"
                 >
-                  Xem toàn bộ Library
+                  Xem toàn bộ AI Library
                   <ArrowRight className="h-4 w-4" />
                 </Link>
               }
@@ -389,10 +389,10 @@ export function HomePage() {
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-medium">
             <Link to="/library" className="opacity-85 hover:opacity-100 hover:underline transition-opacity">
-              Library
+              AI Library
             </Link>
             <Link to="/lab" className="opacity-85 hover:opacity-100 hover:underline transition-opacity">
-              Thinking Lab
+              AI Labs
             </Link>
             <Link to="/guide" className="opacity-85 hover:opacity-100 hover:underline transition-opacity">
               Hướng dẫn

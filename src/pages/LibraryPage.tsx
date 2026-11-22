@@ -1,13 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
   BookOpenCheck,
-  BrainCircuit,
   ChevronDown,
   ChevronUp,
   Clock,
   Filter,
-  Scale,
   X,
 } from 'lucide-react';
 import { WorkspaceShell } from '../components/layout/AppShell';
@@ -21,6 +18,7 @@ import { LibraryFontSizeControl } from '../components/library/LibraryFontSizeCon
 import { LibraryHero } from '../components/library/LibraryHero';
 import { LibrarySearch } from '../components/library/LibrarySearch';
 import { EmptyStateCard } from '../components/ui/EditorialPrimitives';
+import { useToast } from '../components/ui/ToastProvider';
 import { Pagination } from '../components/ui/UiControls';
 import { EDITORIAL_TOPIC_ROADMAP } from '../content/library/categories';
 import { LIBRARY_CONCEPTS } from '../content/library/concepts';
@@ -45,6 +43,7 @@ function parseDateValue(dateStr: string): number {
 
 export function LibraryPage() {
   const { publishedDocuments, visibleCategories, publishedCollections } = useApp();
+  const { showToast } = useToast();
   const { search: urlSearch } = useRouter();
 
   const initialParams = useMemo(() => new URLSearchParams(urlSearch), [urlSearch]);
@@ -346,9 +345,9 @@ export function LibraryPage() {
                 {(
                   [
                     { key: 'all', label: 'Tất cả' },
-                    { key: 'intro', label: 'Nhập môn' },
-                    { key: 'explore', label: 'Khám phá' },
-                    { key: 'advanced', label: 'Chuyên sâu' },
+                    { key: 'intro', label: 'Cơ bản' },
+                    { key: 'explore', label: 'Trung cấp' },
+                    { key: 'advanced', label: 'Nâng cao' },
                   ] as const
                 ).map((item) => (
                   <button
@@ -503,10 +502,19 @@ export function LibraryPage() {
                                 {topic.title}
                               </Link>
                             ) : (
-                              <span className="text-[var(--color-text-muted)]">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  showToast(
+                                    `Chủ đề "${topic.title}" hiện đang trong quá trình biên soạn và kiểm chứng nguồn.`,
+                                    { variant: 'info' }
+                                  )
+                                }
+                                className="text-left text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                              >
                                 {topic.title}{' '}
                                 <span className="italic opacity-75">(đang biên soạn)</span>
-                              </span>
+                              </button>
                             )}
                           </li>
                         );
@@ -517,36 +525,6 @@ export function LibraryPage() {
               })}
             </div>
           )}
-        </section>
-
-        {/* 9. Library -> Thinking Lab Bridge */}
-        <section
-          aria-label="Kết nối Thinking Lab"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 sm:p-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6"
-        >
-          <div className="max-w-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-gold)]">
-              Từ đọc hiểu đến tư duy độc lập
-            </p>
-            <h2 className="mt-1.5 font-display lib-scale-h2 font-bold text-[var(--color-text)]">
-              Đưa bất kỳ khái niệm hay nhận định nào vào Thinking Lab
-            </h2>
-            <p className="mt-2 lib-scale-body text-[var(--color-text-muted)]">
-              Trong từng bài đọc, bạn có thể bôi đen đoạn văn hoặc nhấn “Khám phá với AI” ngay tại mỗi khối nội dung
-              để giải thích sâu, tìm phản ví dụ, hoặc mở bàn tranh biện đa chiều mà không làm mất vị trí đọc.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <Link to="/lab?mode=concept" className="btn-secondary !text-xs sm:!text-sm">
-              <BrainCircuit className="h-4 w-4 text-[var(--color-primary)]" />
-              Mở Concept Lab
-            </Link>
-            <Link to="/lab?mode=debate" className="btn-primary !text-xs sm:!text-sm">
-              <Scale className="h-4 w-4" />
-              Mở Debate Lab
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
         </section>
       </div>
 

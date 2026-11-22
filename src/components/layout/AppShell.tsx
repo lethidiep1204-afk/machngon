@@ -31,8 +31,8 @@ interface NavItem {
 const WORKSPACE_NAV: NavItem[] = [
   { to: '/', label: 'Trang chủ', icon: Home, group: 'primary' },
   { to: '/dashboard', label: 'Tổng quan', icon: LayoutDashboard, group: 'primary' },
-  { to: '/library', label: 'Library', icon: BookOpen, matchPrefix: true, group: 'primary' },
-  { to: '/lab', label: 'Thinking Lab', icon: MessageSquareText, matchPrefix: true, group: 'primary' },
+  { to: '/library', label: 'AI Library', icon: BookOpen, matchPrefix: true, group: 'primary' },
+  { to: '/lab', label: 'AI Labs', icon: MessageSquareText, matchPrefix: true, group: 'primary' },
   { to: '/guide', label: 'Hướng dẫn', icon: Compass, group: 'personal' },
   { to: '/history', label: 'Lịch sử', icon: History, group: 'personal' },
   { to: '/profile', label: 'Hồ sơ & Cài đặt', icon: Settings, group: 'personal' },
@@ -41,8 +41,8 @@ const WORKSPACE_NAV: NavItem[] = [
 
 const MOBILE_BOTTOM_NAV: NavItem[] = [
   { to: '/dashboard', label: 'Tổng quan', icon: LayoutDashboard, group: 'primary' },
-  { to: '/library', label: 'Library', icon: BookOpen, matchPrefix: true, group: 'primary' },
-  { to: '/lab', label: 'Lab', icon: MessageSquareText, matchPrefix: true, group: 'primary' },
+  { to: '/library', label: 'AI Library', icon: BookOpen, matchPrefix: true, group: 'primary' },
+  { to: '/lab', label: 'AI Labs', icon: MessageSquareText, matchPrefix: true, group: 'primary' },
   { to: '/profile', label: 'Hồ sơ', icon: Settings, group: 'personal' },
 ];
 
@@ -96,13 +96,13 @@ export function PublicHeader() {
             to="/library"
             className="py-1 hover:text-[var(--color-primary)] transition-colors whitespace-nowrap shrink-0"
           >
-            Library
+            AI Library
           </Link>
           <Link
             to="/lab"
             className="py-1 hover:text-[var(--color-primary)] transition-colors whitespace-nowrap shrink-0"
           >
-            Thinking Lab
+            AI Labs
           </Link>
           <button
             type="button"
@@ -208,14 +208,14 @@ export function PublicHeader() {
                 onClick={() => setMobileMenuOpen(false)}
                 className="rounded-lg px-3 py-3 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)]"
               >
-                Library
+                AI Library
               </Link>
               <Link
                 to="/lab"
                 onClick={() => setMobileMenuOpen(false)}
                 className="rounded-lg px-3 py-3 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)]"
               >
-                Thinking Lab
+                AI Labs
               </Link>
               <button
                 type="button"

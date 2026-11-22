@@ -6,14 +6,19 @@ import {
   BookOpen,
   BrainCircuit,
   Clock,
+  Cpu,
+  FileText,
   Headphones,
+  Image as ImageIcon,
   Map as MapIcon,
   Mic,
   MicOff,
+  Paperclip,
   Plus,
   RefreshCw,
   Scale,
   Send,
+  ShieldCheck,
   Sparkles,
   Volume2,
   X,
@@ -21,12 +26,22 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { ArgumentLedger } from '../components/lab/ArgumentLedger';
 import { DebateStepperBar, DebateStepperLive } from '../components/lab/DebateStepper5';
+import { SessionReportModal } from '../components/lab/SessionReportModal';
 import { ThreeLayerResponseCard } from '../components/lab/ThreeLayerResponseCard';
 import { WorkspaceShell } from '../components/layout/AppShell';
 import { useToast } from '../components/ui/ToastProvider';
 import { AiAssistantRobotSvg } from '../components/visuals/EditorialSvgIllustrations';
 import { useVoiceDebate } from '../hooks/useVoiceDebate';
 import { useApp } from '../lib/AppContext';
+import {
+  formatFileSize,
+  MAX_LAB_ATTACHMENTS,
+  readAttachmentFile,
+} from '../lib/ai/attachments';
+import {
+  getLabDifficultyDescription,
+  getLabDifficultyLabel,
+} from '../lib/library/validation';
 import { useRouter, useSearchParams } from '../lib/router';
 import {
   consumeLabHandoff,
@@ -35,14 +50,28 @@ import {
 } from '../lib/storage';
 import {
   LabApiRequestPayload,
+  LabApiResponsePayload,
+  LabAttachment,
+  LabDifficultyLevel,
   LabMessage,
   LabSession,
   LabType,
   LedgerEntry,
 } from '../lib/types';
-import { AIRateLimitError, requestLabAnalysis } from '../services/aiService';
+import {
+  AIRateLimitError,
+  AIServiceError,
+  requestLabAnalysis,
+  runLocalLabFallback,
+} from '../services/aiService';
 
-type LabStatus = 'ready' | 'analyzing' | 'responding' | 'rate_limited' | 'network_error';
+type LabStatus = 'ready' | 'analyzing' | 'responding' | 'rate_limited' | 'api_error';
+
+const DIFFICULTY_OPTIONS: Array<{ key: LabDifficultyLevel; label: string }> = [
+  { key: 'basic', label: 'Cơ bản' },
+  { key: 'intermediate', label: 'Trung cấp' },
+  { key: 'advanced', label: 'Nâng cao' },
+];
 
 const CONCEPT_STARTERS = [
   {
@@ -80,10 +109,6 @@ const DEBATE_STARTERS = [
   },
 ];
 
-/**
- * Computes 3 context-aware Quick Reply Chips positioned directly above the composer
- * based on lab mode and current DebateStepper5 stage (1..5).
- */
 function getContextualQuickReplies(labType: LabType, stage: number, hasMessages: boolean): string[] {
   if (!hasMessages) {
     if (labType === 'concept') {
@@ -122,7 +147,6 @@ function getContextualQuickReplies(labType: LabType, stage: number, hasMessages:
     ];
   }
 
-  // Debate Lab stage-specific quick reply chips
   if (stage <= 1) {
     return [
       'Giúp tôi làm rõ khái niệm này',
@@ -154,7 +178,8 @@ function getContextualQuickReplies(labType: LabType, stage: number, hasMessages:
 function createEmptySession(
   labType: LabType,
   resourceContextId?: string,
-  title?: string
+  title?: string,
+  difficulty: LabDifficultyLevel = 'intermediate'
 ): LabSession {
   const now = new Date().toISOString();
   return {
@@ -163,6 +188,7 @@ function createEmptySession(
       title ||
       (labType === 'concept' ? 'Phiên phân tích khái niệm mới' : 'Phiên tranh biện mới'),
     labType,
+    difficulty,
     resourceContextId,
     messages: [],
     ledger: [],
@@ -186,7 +212,12 @@ export function LabPage() {
   const [activeSession, setActiveSession] = useState<LabSession>(() => {
     if (querySessionId) {
       const existing = sessions.find((s) => s.id === querySessionId);
-      if (existing) return existing;
+      if (existing) {
+        return {
+          ...existing,
+          difficulty: existing.difficulty ?? 'intermediate',
+        };
+      }
     }
     const matchingResource = queryResourceId
       ? documents.find((d) => d.id === queryResourceId)
@@ -194,35 +225,47 @@ export function LabPage() {
     return createEmptySession(
       queryMode,
       queryResourceId,
-      matchingResource ? `Tranh biện · ${matchingResource.title}` : undefined
+      matchingResource ? `Tranh biện · ${matchingResource.title}` : undefined,
+      'intermediate'
     );
   });
 
   const [composerText, setComposerText] = useState<string>(() => loadLabDraft(activeSession.id));
+  const [attachments, setAttachments] = useState<LabAttachment[]>([]);
   const [status, setStatus] = useState<LabStatus>('ready');
   const [analyzingStep, setAnalyzingStep] = useState<number>(0);
   const [rateLimitState, setRateLimitState] = useState<{
     message: string;
     secondsLeft: number;
   } | null>(null);
-  const [networkError, setNetworkError] = useState<string | null>(null);
+  const [apiErrorState, setApiErrorState] = useState<{
+    title: string;
+    message: string;
+    isQuotaOrKey: boolean;
+  } | null>(null);
+  const [pendingRetryPayload, setPendingRetryPayload] = useState<{
+    messageText: string;
+    attachmentsSnapshot: LabAttachment[];
+  } | null>(null);
   const [autosaveNotice, setAutosaveNotice] = useState<string | null>(null);
 
-  // Single unified collapsible right drawer for ArgumentLedger (collapsed by default so chat gets ~80% width)
   const [ledgerOpen, setLedgerOpen] = useState(false);
-
-  // Track which newly received AI message should run the smooth typing reveal effect
+  const [reportOpen, setReportOpen] = useState(false);
   const [latestAnimatedMsgId, setLatestAnimatedMsgId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const submitMessageRef = useRef<
-    ((options?: { simulate429?: boolean; overrideText?: string }) => Promise<void>) | null
+    ((options?: { simulate429?: boolean; overrideText?: string; useLocalFallback?: boolean }) => Promise<void>) | null
   >(null);
 
-  // Voice Debate Mode hook (Vietnamese STT + TTS + Hands-free orchestration)
+  const isBusy = status === 'analyzing' || status === 'responding';
+
+  // Voice Debate Mode hook with strict anti-echo lock during AI speech + cooldown
   const voice = useVoiceDebate({
     baseText: composerText,
+    isAiBusy: isBusy,
     onTranscriptChange: (nextText) => {
       setComposerText(nextText);
     },
@@ -243,10 +286,12 @@ export function LabPage() {
       const fresh = createEmptySession(
         handoff.labType,
         handoff.resourceContextId,
-        `${handoff.labType === 'concept' ? 'Phân tích' : 'Tranh biện'} · ${handoff.resourceTitle}`
+        `${handoff.labType === 'concept' ? 'Phân tích' : 'Tranh biện'} · ${handoff.resourceTitle}`,
+        activeSession.difficulty ?? 'intermediate'
       );
       setActiveSession(fresh);
       setLatestAnimatedMsgId(null);
+      setAttachments([]);
 
       let promptSeed = '';
       switch (handoff.actionIntent) {
@@ -267,7 +312,7 @@ export function LabPage() {
       }
       setComposerText(promptSeed);
       saveLabDraft(fresh.id, promptSeed);
-      showToast('Đã mang trích đoạn từ Library vào Thinking Lab.', { variant: 'info' });
+      showToast('Đã mang trích đoạn từ AI Library vào AI Labs.', { variant: 'info' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -277,11 +322,13 @@ export function LabPage() {
     if (!querySessionId) return;
     const found = sessions.find((s) => s.id === querySessionId);
     if (found && found.id !== activeSession.id) {
-      setActiveSession(found);
+      setActiveSession({ ...found, difficulty: found.difficulty ?? 'intermediate' });
       setLatestAnimatedMsgId(null);
       setComposerText(loadLabDraft(found.id));
+      setAttachments([]);
       setRateLimitState(null);
-      setNetworkError(null);
+      setApiErrorState(null);
+      setPendingRetryPayload(null);
     }
   }, [querySessionId, sessions, activeSession.id]);
 
@@ -314,7 +361,8 @@ export function LabPage() {
     [activeSession.resourceContextId, documents]
   );
 
-  // Derive current DebateStepper5 stage (1..5) from user turns
+  const currentDifficulty: LabDifficultyLevel = activeSession.difficulty ?? 'intermediate';
+
   const currentStage = useMemo(() => {
     const userTurns = activeSession.messages.filter((m) => m.role === 'user').length;
     const lastMsg = activeSession.messages[activeSession.messages.length - 1];
@@ -339,6 +387,22 @@ export function LabPage() {
     [activeSession.labType, currentStage, activeSession.messages.length]
   );
 
+  const handleDifficultyChange = (nextDifficulty: LabDifficultyLevel) => {
+    if (nextDifficulty === currentDifficulty) return;
+    const updated: LabSession = {
+      ...activeSession,
+      difficulty: nextDifficulty,
+      updatedAt: new Date().toISOString(),
+    };
+    setActiveSession(updated);
+    if (updated.messages.length > 0) {
+      upsertSession(updated);
+    }
+    showToast(`Đã chuyển cấp độ phân tích sang ${getLabDifficultyLabel(nextDifficulty)}.`, {
+      variant: 'info',
+    });
+  };
+
   const handleModeSwitch = (nextMode: LabType) => {
     if (nextMode === activeSession.labType) return;
     voice.stopSpeaking();
@@ -352,12 +416,19 @@ export function LabPage() {
       }));
       return;
     }
-    const fresh = createEmptySession(nextMode, activeSession.resourceContextId);
+    const fresh = createEmptySession(
+      nextMode,
+      activeSession.resourceContextId,
+      undefined,
+      currentDifficulty
+    );
     setActiveSession(fresh);
     setLatestAnimatedMsgId(null);
     setComposerText(loadLabDraft(fresh.id));
+    setAttachments([]);
     setRateLimitState(null);
-    setNetworkError(null);
+    setApiErrorState(null);
+    setPendingRetryPayload(null);
     showToast(
       `Đã chuyển sang ${nextMode === 'concept' ? 'Concept Lab' : 'Debate Lab'} (phiên mới).`,
       { variant: 'info' }
@@ -367,12 +438,14 @@ export function LabPage() {
   const handleStartNewSession = () => {
     voice.stopSpeaking();
     voice.stopListening();
-    const fresh = createEmptySession(activeSession.labType);
+    const fresh = createEmptySession(activeSession.labType, undefined, undefined, currentDifficulty);
     setActiveSession(fresh);
     setLatestAnimatedMsgId(null);
     setComposerText('');
+    setAttachments([]);
     setRateLimitState(null);
-    setNetworkError(null);
+    setApiErrorState(null);
+    setPendingRetryPayload(null);
     setAutosaveNotice(null);
     showToast('Đã khởi tạo phiên đối thoại mới.', { variant: 'info' });
   };
@@ -389,10 +462,196 @@ export function LabPage() {
     );
   };
 
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    const incoming = Array.from(fileList);
+    let currentCount = attachments.length;
+    const added: LabAttachment[] = [];
+
+    for (const file of incoming) {
+      if (currentCount >= MAX_LAB_ATTACHMENTS) {
+        showToast(`Chỉ đính kèm tối đa ${MAX_LAB_ATTACHMENTS} tệp trong một lượt.`, {
+          variant: 'warning',
+        });
+        break;
+      }
+      try {
+        const parsed = await readAttachmentFile(file, currentCount);
+        added.push(parsed);
+        currentCount += 1;
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Không thể đính kèm tệp này.', {
+          variant: 'warning',
+        });
+      }
+    }
+
+    if (added.length > 0) {
+      setAttachments((prev) => [...prev, ...added]);
+      showToast(`Đã đính kèm ${added.length} tệp vào ngữ cảnh phân tích.`, { variant: 'info' });
+    }
+
+    // Reset input so user can re-select the same file later if removed
+    event.target.value = '';
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const commitTurnResult = useCallback(
+    (
+      data: LabApiResponsePayload,
+      messageToSend: string,
+      sentAttachments: LabAttachment[],
+      clearComposer: boolean
+    ) => {
+      const userCount = activeSession.ledger.filter((e) => e.speaker === 'user').length + 1;
+      const aiCount = activeSession.ledger.filter((e) => e.speaker === 'ai').length + 1;
+      const userRef = `U#${userCount}`;
+      const aiRef = `A#${aiCount}`;
+      const nowIso = new Date().toISOString();
+      const aiMsgId = `msg_a_${Date.now().toString(36)}`;
+
+      const userMsg: LabMessage = {
+        id: `msg_u_${Date.now().toString(36)}`,
+        role: 'user',
+        turnRef: userRef,
+        content: messageToSend,
+        timestamp: nowIso,
+        attachments:
+          sentAttachments.length > 0
+            ? sentAttachments.map((a) => ({
+                id: a.id,
+                name: a.name,
+                mimeType: a.mimeType,
+                size: a.size,
+                kind: a.kind,
+              }))
+            : undefined,
+      };
+
+      const aiMsg: LabMessage = {
+        id: aiMsgId,
+        role: 'assistant',
+        turnRef: aiRef,
+        content: data.ai_claim_summary,
+        timestamp: nowIso,
+        threeLayer: data.three_layer,
+        debateSteps: data.debate_steps,
+        sourceEngine: data.source_engine,
+        responseId: data.response_id,
+      };
+
+      const newLedgerEntries: LedgerEntry[] = [
+        {
+          id: userRef,
+          speaker: 'user',
+          turnIndex: userCount,
+          claim: data.user_claim_summary,
+          assumptions: data.new_assumptions,
+          contradictionFlag: data.contradiction_note ?? undefined,
+          timestamp: nowIso,
+        },
+        {
+          id: aiRef,
+          speaker: 'ai',
+          turnIndex: aiCount,
+          claim: data.ai_claim_summary,
+          assumptions: [],
+          timestamp: nowIso,
+        },
+      ];
+
+      const mergedAssumptions = Array.from(
+        new Set([...activeSession.coreAssumptions, ...data.new_assumptions])
+      ).slice(0, 8);
+
+      const nextContradictions = data.contradiction_note
+        ? [
+            ...activeSession.contradictions,
+            {
+              id: `c_${Date.now().toString(36)}`,
+              refA: userRef,
+              refB: data.contradiction_ref || 'U#1',
+              note: data.contradiction_note,
+            },
+          ]
+        : activeSession.contradictions;
+
+      const updatedSession: LabSession = {
+        ...activeSession,
+        title:
+          activeSession.messages.length === 0 && !attachedResource
+            ? messageToSend.slice(0, 62) + (messageToSend.length > 62 ? '…' : '')
+            : activeSession.title,
+        previousResponseId: data.response_id,
+        messages: [...activeSession.messages, userMsg, aiMsg],
+        ledger: [...activeSession.ledger, ...newLedgerEntries],
+        coreAssumptions: mergedAssumptions,
+        contradictions: nextContradictions,
+        updatedAt: nowIso,
+      };
+
+      setActiveSession(updatedSession);
+      setLatestAnimatedMsgId(aiMsgId);
+      upsertSession(updatedSession);
+      if (clearComposer) {
+        setComposerText('');
+        saveLabDraft(updatedSession.id, '');
+      }
+      setAttachments([]);
+      setRateLimitState(null);
+      setApiErrorState(null);
+      setPendingRetryPayload(null);
+      setAutosaveNotice(null);
+      setStatus('ready');
+
+      window.setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 120);
+
+      // Hands-free Voice Debate Mode: speak AI reply with strict mic lock, then auto-open mic after cooldown
+      if (voice.handsFreeMode && data.three_layer.guidingQuestion) {
+        const spokenReply = [
+          data.three_layer.tldr,
+          data.three_layer.interpretation,
+          data.three_layer.guidingQuestion,
+        ]
+          .filter(Boolean)
+          .join('. ');
+
+        window.setTimeout(() => {
+          voice.speakText(spokenReply, aiMsgId, () => {
+            voice.startListening({ clearBeforeStart: true });
+          });
+        }, 260);
+      }
+    },
+    [activeSession, attachedResource, upsertSession, voice]
+  );
+
   const submitMessage = useCallback(
-    async (options?: { simulate429?: boolean; overrideText?: string }) => {
-      const trimmed = (options?.overrideText ?? composerText).trim();
-      if (!trimmed) {
+    async (options?: {
+      simulate429?: boolean;
+      overrideText?: string;
+      useLocalFallback?: boolean;
+    }) => {
+      const activeAttachments =
+        options?.useLocalFallback && pendingRetryPayload
+          ? pendingRetryPayload.attachmentsSnapshot
+          : attachments;
+
+      const trimmed = (
+        options?.overrideText ??
+        (options?.useLocalFallback && pendingRetryPayload
+          ? pendingRetryPayload.messageText
+          : composerText)
+      ).trim();
+
+      if (!trimmed && activeAttachments.length === 0) {
         if (options?.simulate429) {
           const demoDraft =
             'Mọi người đều luôn luôn tự do lựa chọn, nhưng lập luận này cần kiểm tra lại dưới góc nhìn xã hội.';
@@ -405,17 +664,48 @@ export function LabPage() {
 
       const messageToSend =
         trimmed ||
-        'Mọi người đều luôn luôn tự do lựa chọn, nhưng lập luận này cần kiểm tra lại dưới góc nhìn xã hội.';
+        (activeAttachments.length > 0
+          ? `Hãy phân tích nội dung và đối chiếu dẫn chứng trong tệp đính kèm: ${activeAttachments
+              .map((a) => a.name)
+              .join(', ')}.`
+          : 'Mọi người đều luôn luôn tự do lựa chọn, nhưng lập luận này cần kiểm tra lại dưới góc nhìn xã hội.');
 
-      if (rateLimitState && rateLimitState.secondsLeft > 0) {
+      if (!options?.useLocalFallback && rateLimitState && rateLimitState.secondsLeft > 0) {
         return;
       }
 
-      // Stop any ongoing voice input/output before sending
       voice.stopListening();
       voice.stopSpeaking();
 
-      setNetworkError(null);
+      const payload: LabApiRequestPayload = {
+        session_id: activeSession.id,
+        lab_type: activeSession.labType,
+        difficulty: currentDifficulty,
+        message: messageToSend,
+        resource_context_id: activeSession.resourceContextId ?? null,
+        attachments: activeAttachments.length > 0 ? activeAttachments : undefined,
+        history: activeSession.messages.map((m) => ({
+          role: m.role,
+          content: m.threeLayer
+            ? `${m.threeLayer.tldr ? `${m.threeLayer.tldr} ` : ''}${m.threeLayer.interpretation}`
+            : m.content,
+          turnRef: m.turnRef,
+        })),
+        ledger_snapshot: activeSession.ledger,
+        core_assumptions: activeSession.coreAssumptions,
+        previous_response_id: activeSession.previousResponseId ?? null,
+        simulate_429: options?.simulate429 ?? false,
+      };
+
+      // Explicit user-approved Local Fallback path
+      if (options?.useLocalFallback) {
+        const localData = runLocalLabFallback(payload, attachedResource);
+        commitTurnResult(localData, messageToSend, activeAttachments, true);
+        showToast('Đã phân tích bằng chế độ cục bộ (không dùng API AI).', { variant: 'info' });
+        return;
+      }
+
+      setApiErrorState(null);
       setAutosaveNotice(null);
       setStatus('analyzing');
       setAnalyzingStep(0);
@@ -425,177 +715,75 @@ export function LabPage() {
       }, 240);
 
       try {
-        const payload: LabApiRequestPayload = {
-          session_id: activeSession.id,
-          lab_type: activeSession.labType,
-          message: messageToSend,
-          resource_context_id: activeSession.resourceContextId ?? null,
-          history: activeSession.messages.map((m) => ({
-            role: m.role,
-            content: m.threeLayer
-              ? `${m.threeLayer.tldr ? `${m.threeLayer.tldr} ` : ''}${m.threeLayer.interpretation}`
-              : m.content,
-            turnRef: m.turnRef,
-          })),
-          ledger_snapshot: activeSession.ledger,
-          core_assumptions: activeSession.coreAssumptions,
-          previous_response_id: activeSession.previousResponseId ?? null,
-          simulate_429: options?.simulate429 ?? false,
-        };
-
         const data = await requestLabAnalysis(payload, attachedResource);
 
         window.clearInterval(stepInterval);
         setStatus('responding');
         setAnalyzingStep(4);
 
-        const userCount = activeSession.ledger.filter((e) => e.speaker === 'user').length + 1;
-        const aiCount = activeSession.ledger.filter((e) => e.speaker === 'ai').length + 1;
-        const userRef = `U#${userCount}`;
-        const aiRef = `A#${aiCount}`;
-        const nowIso = new Date().toISOString();
-        const aiMsgId = `msg_a_${Date.now().toString(36)}`;
-
-        const userMsg: LabMessage = {
-          id: `msg_u_${Date.now().toString(36)}`,
-          role: 'user',
-          turnRef: userRef,
-          content: messageToSend,
-          timestamp: nowIso,
-        };
-
-        const aiMsg: LabMessage = {
-          id: aiMsgId,
-          role: 'assistant',
-          turnRef: aiRef,
-          content: data.ai_claim_summary,
-          timestamp: nowIso,
-          threeLayer: data.three_layer,
-          debateSteps: data.debate_steps,
-          sourceEngine: data.source_engine,
-          responseId: data.response_id,
-        };
-
-        const newLedgerEntries: LedgerEntry[] = [
-          {
-            id: userRef,
-            speaker: 'user',
-            turnIndex: userCount,
-            claim: data.user_claim_summary,
-            assumptions: data.new_assumptions,
-            contradictionFlag: data.contradiction_note ?? undefined,
-            timestamp: nowIso,
-          },
-          {
-            id: aiRef,
-            speaker: 'ai',
-            turnIndex: aiCount,
-            claim: data.ai_claim_summary,
-            assumptions: [],
-            timestamp: nowIso,
-          },
-        ];
-
-        const mergedAssumptions = Array.from(
-          new Set([...activeSession.coreAssumptions, ...data.new_assumptions])
-        ).slice(0, 8);
-
-        const nextContradictions = data.contradiction_note
-          ? [
-              ...activeSession.contradictions,
-              {
-                id: `c_${Date.now().toString(36)}`,
-                refA: userRef,
-                refB: data.contradiction_ref || 'U#1',
-                note: data.contradiction_note,
-              },
-            ]
-          : activeSession.contradictions;
-
-        const updatedSession: LabSession = {
-          ...activeSession,
-          title:
-            activeSession.messages.length === 0 && !attachedResource
-              ? messageToSend.slice(0, 62) + (messageToSend.length > 62 ? '…' : '')
-              : activeSession.title,
-          previousResponseId: data.response_id,
-          messages: [...activeSession.messages, userMsg, aiMsg],
-          ledger: [...activeSession.ledger, ...newLedgerEntries],
-          coreAssumptions: mergedAssumptions,
-          contradictions: nextContradictions,
-          updatedAt: nowIso,
-        };
-
-        setActiveSession(updatedSession);
-        setLatestAnimatedMsgId(aiMsgId);
-        upsertSession(updatedSession);
-        if (!options?.overrideText) {
-          setComposerText('');
-          saveLabDraft(updatedSession.id, '');
-        }
-        setRateLimitState(null);
-        setStatus('ready');
-
-        window.setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        }, 120);
-
-        // Hands-free Voice Debate Mode: speak the Socratic question, then auto-open mic
-        if (voice.handsFreeMode && data.three_layer.guidingQuestion) {
-          const spokenReply = [
-            data.three_layer.tldr,
-            data.three_layer.interpretation,
-            data.three_layer.guidingQuestion,
-          ]
-            .filter(Boolean)
-            .join('. ');
-
-          window.setTimeout(() => {
-            voice.speakText(spokenReply, aiMsgId, () => {
-              // Automatically start listening for the student's reply once AI finishes speaking
-              voice.startListening({ clearBeforeStart: true });
-            });
-          }, 260);
-        }
+        commitTurnResult(data, messageToSend, activeAttachments, !options?.overrideText);
       } catch (err) {
         window.clearInterval(stepInterval);
+        saveLabDraft(activeSession.id, messageToSend);
+        setPendingRetryPayload({
+          messageText: messageToSend,
+          attachmentsSnapshot: activeAttachments,
+        });
 
         if (err instanceof AIRateLimitError) {
-          saveLabDraft(activeSession.id, messageToSend);
           setStatus('rate_limited');
           setRateLimitState({
             message: err.message,
             secondsLeft: err.retryAfter,
           });
+          setAutosaveNotice(
+            'Nội dung và tệp đính kèm của bạn vẫn được giữ nguyên. Bạn có thể chờ hết đếm ngược để thử lại API hoặc chủ động chuyển sang Chế độ phân tích cục bộ.'
+          );
           showToast(
-            `Phòng thí nghiệm tạm nghỉ ${err.retryAfter} giây. Bản thảo của bạn được giữ nguyên.`,
-            {
-              variant: 'warning',
-            }
+            `Đã hết bản thông minh (API AI) hiện tại (HTTP 429). Văn bản của bạn được bảo toàn.`,
+            { variant: 'warning' }
           );
           return;
         }
 
-        saveLabDraft(activeSession.id, messageToSend);
-        setStatus('network_error');
-        setNetworkError(
-          err instanceof Error
-            ? err.message
-            : 'Không thể kết nối tới máy chủ. Vui lòng thử lại.'
-        );
-        setAutosaveNotice('Bản thảo của bạn đã được tự động lưu cục bộ (local autosave).');
-        showToast('Kết nối phân tích tạm gián đoạn. Bản thảo đã được tự động lưu cục bộ.', {
-          variant: 'error',
+        const isQuotaOrKey =
+          err instanceof AIServiceError &&
+          (err.code === 'MISSING_API_KEY' ||
+            err.code === 'INVALID_API_KEY' ||
+            err.code === 'QUOTA_EXHAUSTED');
+
+        setStatus('api_error');
+        setApiErrorState({
+          title: isQuotaOrKey
+            ? 'Đã hết bản thông minh (API AI) hoặc chưa kích hoạt khóa API'
+            : 'Kết nối tới bản thông minh (API AI) tạm gián đoạn',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'Không thể kết nối tới máy chủ AI. Vui lòng thử lại.',
+          isQuotaOrKey,
         });
+        setAutosaveNotice(
+          'Toàn bộ nội dung và tệp đính kèm của bạn vẫn được giữ nguyên (tự động lưu cục bộ).'
+        );
+        showToast(
+          isQuotaOrKey
+            ? 'Bản thông minh (API AI) hiện không khả dụng — bạn có thể chọn Chế độ phân tích cục bộ.'
+            : 'Kết nối máy chủ AI tạm gián đoạn. Bản thảo đã được giữ nguyên.',
+          { variant: 'warning' }
+        );
       }
     },
     [
       activeSession,
       attachedResource,
+      attachments,
+      commitTurnResult,
       composerText,
+      currentDifficulty,
+      pendingRetryPayload,
       rateLimitState,
       showToast,
-      upsertSession,
       voice,
     ]
   );
@@ -604,18 +792,17 @@ export function LabPage() {
     submitMessageRef.current = submitMessage;
   }, [submitMessage]);
 
-  const isBusy = status === 'analyzing' || status === 'responding';
   const isRateCountdownActive = Boolean(rateLimitState && rateLimitState.secondsLeft > 0);
   const starters = activeSession.labType === 'concept' ? CONCEPT_STARTERS : DEBATE_STARTERS;
 
   return (
     <WorkspaceShell noMainBottomPadding>
       <div className="flex flex-col h-[calc(100dvh-56px-68px)] lg:h-dvh overflow-hidden">
-        {/* Top Lab Header: Mode Switcher + Voice Mode Toggle + New Session + Single Unified Sổ tay Button */}
+        {/* Top AI Labs Header: Mode Switcher + Difficulty Hierarchy + Voice + Report + New + Sổ tay */}
         <header className="shrink-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-5 py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2.5">
-            {/* Left: Segmented Mode Switcher + Compact Session Title */}
-            <div className="flex items-center gap-2.5 min-w-0">
+            {/* Left: Mode Switcher + Difficulty Selector */}
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
               <div
                 role="tablist"
                 aria-label="Chuyển đổi giữa Concept Lab và Debate Lab"
@@ -626,7 +813,7 @@ export function LabPage() {
                   role="tab"
                   aria-selected={activeSession.labType === 'concept'}
                   onClick={() => handleModeSwitch('concept')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
                     activeSession.labType === 'concept'
                       ? 'bg-[var(--color-primary)] text-[var(--color-on-primary)]'
                       : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
@@ -640,7 +827,7 @@ export function LabPage() {
                   role="tab"
                   aria-selected={activeSession.labType === 'debate'}
                   onClick={() => handleModeSwitch('debate')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
                     activeSession.labType === 'debate'
                       ? 'bg-[var(--color-primary)] text-[var(--color-on-primary)]'
                       : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
@@ -651,40 +838,76 @@ export function LabPage() {
                 </button>
               </div>
 
-              <span className="hidden xl:inline-block text-xs font-medium text-[var(--color-text-muted)] truncate max-w-[260px]">
-                {activeSession.title}
-              </span>
+              {/* Difficulty Hierarchy Selector (Req 10) */}
+              <div
+                role="radiogroup"
+                aria-label="Chọn cấp độ tư duy AI Labs"
+                data-testid="lab-difficulty-selector"
+                title={getLabDifficultyDescription(currentDifficulty)}
+                className="inline-flex items-center rounded-xl p-1 border border-[var(--color-border)] bg-[var(--color-bg)] shrink-0"
+              >
+                {DIFFICULTY_OPTIONS.map((opt) => {
+                  const active = currentDifficulty === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => handleDifficultyChange(opt.key)}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                        active
+                          ? 'bg-[var(--color-surface)] text-[var(--color-primary)] font-semibold border border-[var(--color-border)]'
+                          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Right Controls: Hands-free Voice Toggle + Phiên mới + SINGLE Unified Sổ tay Button */}
-            <div className="flex items-center gap-2 shrink-0">
+            {/* Right Controls: Hands-free Voice + Report + Phiên mới + Sổ tay */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
                 type="button"
                 onClick={voice.toggleHandsFreeMode}
                 aria-pressed={voice.handsFreeMode}
-                title="Tự động đọc câu hỏi Socrates và mở Micro lắng nghe câu trả lời của bạn"
-                className={`inline-flex items-center gap-1.5 rounded-xl min-h-9 px-3 py-1.5 text-xs font-medium border transition-colors whitespace-nowrap cursor-pointer ${
+                data-testid="hands-free-toggle-btn"
+                title="Chế độ rảnh tay: AI đọc phản hồi (tự khóa mic chống vọng) rồi mở Micro nghe bạn nói"
+                className={`inline-flex items-center gap-1.5 rounded-xl min-h-9 px-2.5 sm:px-3 py-1.5 text-xs font-medium border transition-colors whitespace-nowrap cursor-pointer ${
                   voice.handsFreeMode
                     ? 'border-[var(--color-primary)] bg-[color-mix(in_srgb,var(--color-primary)_13%,var(--color-surface)_87%)] text-[var(--color-primary)] font-semibold'
                     : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-muted)]'
                 }`}
               >
                 <Headphones className="h-3.5 w-3.5 shrink-0" />
-                <span className="hidden sm:inline">
-                  {voice.handsFreeMode ? 'Rảnh tay: Bật' : 'Tranh biện rảnh tay'}
+                <span className="hidden md:inline">
+                  {voice.handsFreeMode ? 'Rảnh tay: Bật' : 'Rảnh tay'}
                 </span>
               </button>
 
               <button
                 type="button"
-                onClick={handleStartNewSession}
-                className="btn-secondary !min-h-9 !px-3 !py-1.5 !text-xs"
+                data-testid="open-report-btn"
+                onClick={() => setReportOpen(true)}
+                title="Xem & xuất báo cáo tổng hợp phiên (luận điểm, điểm mạnh/yếu, câu hỏi, dẫn chứng)"
+                className="btn-secondary !min-h-9 !px-2.5 sm:!px-3 !py-1.5 !text-xs whitespace-nowrap"
               >
-                <Plus className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Phiên mới</span>
+                <FileText className="h-3.5 w-3.5 text-[var(--color-primary)] shrink-0" />
+                <span className="hidden sm:inline">Báo cáo</span>
               </button>
 
-              {/* SINGLE unified Sổ tay (N) button across ALL viewports (Desktop + Tablet + Mobile) */}
+              <button
+                type="button"
+                onClick={handleStartNewSession}
+                className="btn-secondary !min-h-9 !px-2.5 sm:!px-3 !py-1.5 !text-xs whitespace-nowrap"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="hidden xl:inline">Phiên mới</span>
+              </button>
+
               <button
                 type="button"
                 data-testid="toggle-ledger-btn"
@@ -692,7 +915,7 @@ export function LabPage() {
                 aria-pressed={ledgerOpen}
                 aria-expanded={ledgerOpen}
                 aria-label="Đóng hoặc mở Sổ tay mạch lập luận"
-                className={`inline-flex items-center gap-1.5 rounded-xl min-h-9 px-3 py-1.5 text-xs font-medium border transition-colors whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center gap-1.5 rounded-xl min-h-9 px-2.5 sm:px-3 py-1.5 text-xs font-medium border transition-colors whitespace-nowrap cursor-pointer ${
                   ledgerOpen
                     ? 'border-[var(--color-primary)] bg-[color-mix(in_srgb,var(--color-primary)_13%,var(--color-surface)_87%)] text-[var(--color-primary)] font-semibold'
                     : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-muted)]'
@@ -709,7 +932,7 @@ export function LabPage() {
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-1.5 border border-[var(--color-border)] bg-[var(--color-bg)]/70 text-xs">
               <div className="flex items-center gap-2 min-w-0">
                 <BookOpen className="h-3.5 w-3.5 shrink-0 text-[var(--color-primary)]" />
-                <span className="text-[var(--color-text-muted)] shrink-0">Học liệu Library:</span>
+                <span className="text-[var(--color-text-muted)] shrink-0">Học liệu AI Library:</span>
                 <span className="font-medium text-[var(--color-text)] truncate">
                   {attachedResource.title}
                 </span>
@@ -740,7 +963,7 @@ export function LabPage() {
           )}
         </header>
 
-        {/* Slim Horizontal 5-Step Progress Strip at Top of Chat Frame */}
+        {/* Slim Horizontal 5-Step Progress Strip */}
         <DebateStepperBar
           currentStage={currentStage}
           labType={activeSession.labType}
@@ -748,37 +971,32 @@ export function LabPage() {
           analyzingStepIndex={analyzingStep}
         />
 
-        {/* Body Area: Expansive Chat Canvas (75-80%+ width) + Collapsible Right Sổ tay Drawer */}
+        {/* Body Area */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden">
-          {/* Center Dialogue Column */}
           <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
             {/* Scrollable Messages Stream */}
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-10 py-6 sm:py-8">
-              <div className="mx-auto max-w-[800px] space-y-6">
+              <div className="mx-auto max-w-[820px] space-y-6">
                 {activeSession.messages.length === 0 ? (
                   <div className="py-4 sm:py-8 space-y-6">
-                    {/* Airy Welcome State inspired by ChatGPT / Gemini */}
                     <div className="rounded-2xl p-6 sm:p-8 surface-card text-center space-y-5">
                       <div className="flex justify-center">
                         <AiAssistantRobotSvg className="h-20 w-20 sm:h-24 sm:w-24" />
                       </div>
                       <div className="space-y-2 max-w-xl mx-auto">
                         <p className="editorial-kicker">
-                          {activeSession.labType === 'concept'
-                            ? 'Concept Lab · Khám phá khái niệm Socrates'
-                            : 'Debate Lab · Tranh biện Socrates & Giọng nói tiếng Việt'}
+                          AI Labs · {activeSession.labType === 'concept' ? 'Concept Lab' : 'Debate Lab'} · Cấp độ {getLabDifficultyLabel(currentDifficulty)}
                         </p>
                         <h1 className="font-display text-2xl sm:text-[2rem] font-semibold text-[var(--color-text)]">
                           {activeSession.labType === 'concept'
-                            ? 'Bạn muốn hiểu sâu khái niệm nào hôm nay?'
-                            : 'Bạn muốn kiểm chứng quan điểm nào hôm nay?'}
+                            ? 'Bạn muốn phân tích khái niệm nào hôm nay?'
+                            : 'Bạn muốn kiểm chứng lập luận nào hôm nay?'}
                         </h1>
                         <p className="text-sm leading-relaxed text-[var(--color-text-muted)]">
-                          Gõ ý kiến của bạn hoặc bấm biểu tượng Micro để nói trực tiếp bằng tiếng Việt. Mỗi lượt mình sẽ phản hồi gọn gàng: công nhận phần hợp lý, soi đúng 1 điểm hở và đặt duy nhất 1 câu hỏi gợi mở.
+                          Gõ quan điểm, nói tiếng Việt hoặc đính kèm tệp (.txt, .md, ảnh, PDF). Mỗi lượt AI phản biện cân bằng hai chiều (điểm tích cực + điểm hạn chế), kiểm chứng nguồn dẫn chứng và đặt duy nhất 1 câu hỏi Socrates trọng tâm.
                         </p>
                       </div>
 
-                      {/* Topic Starter Cards */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 text-left">
                         {starters.map((starter) => (
                           <button
@@ -805,14 +1023,31 @@ export function LabPage() {
                   activeSession.messages.map((msg) =>
                     msg.role === 'user' ? (
                       <div key={msg.id} className="flex justify-end">
-                        <div className="max-w-[85%] sm:max-w-[74%] rounded-2xl rounded-br-md px-4 sm:px-5 py-3.5 border border-[color-mix(in_srgb,var(--color-primary)_22%,var(--color-border)_78%)] bg-[color-mix(in_srgb,var(--color-primary)_9%,var(--color-surface)_91%)]">
-                          <div className="flex items-center justify-end gap-1.5 text-[11px] text-[var(--color-text-muted)] mb-1">
+                        <div className="max-w-[85%] sm:max-w-[74%] rounded-2xl rounded-br-md px-4 sm:px-5 py-3.5 border border-[color-mix(in_srgb,var(--color-primary)_22%,var(--color-border)_78%)] bg-[color-mix(in_srgb,var(--color-primary)_9%,var(--color-surface)_91%)] space-y-2">
+                          <div className="flex items-center justify-end gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                             <span className="font-mono-num font-semibold text-[var(--color-primary)]">
                               {msg.turnRef || 'Bạn'}
                             </span>
                             <span aria-hidden="true">·</span>
                             <span>Quan điểm của bạn</span>
                           </div>
+                          {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="flex flex-wrap justify-end gap-1.5">
+                              {msg.attachments.map((att) => (
+                                <span
+                                  key={att.id}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] text-[var(--color-text)]"
+                                >
+                                  {att.kind === 'image' ? (
+                                    <ImageIcon className="h-3 w-3 text-[var(--color-primary)]" />
+                                  ) : (
+                                    <FileText className="h-3 w-3 text-[var(--color-primary)]" />
+                                  )}
+                                  <span className="max-w-[160px] truncate">{att.name}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           <p className="font-reading text-[0.98rem] sm:text-[1.02rem] leading-[1.72] text-[var(--color-text)] whitespace-pre-line">
                             {msg.content}
                           </p>
@@ -835,60 +1070,98 @@ export function LabPage() {
                   )
                 )}
 
-                {/* Inline Live Analyzing Status */}
                 {isBusy && <DebateStepperLive activeIndex={analyzingStep} />}
 
-                {/* Calm HTTP 429 Countdown Banner */}
+                {/* Transparent HTTP 429 Quota Banner (Req 7) */}
                 {rateLimitState && rateLimitState.secondsLeft > 0 && (
                   <div
                     role="status"
                     aria-live="polite"
-                    className="rounded-xl p-4 border flex items-start gap-3"
+                    data-testid="quota-exhausted-banner"
+                    className="rounded-xl p-4 border space-y-3"
                     style={{
                       backgroundColor: 'var(--color-warn-bg)',
                       borderColor: 'var(--color-warn-border)',
                     }}
                   >
-                    <Clock className="h-4.5 w-4.5 shrink-0 text-[var(--color-gold)] mt-0.5" />
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-[var(--color-text)]">
-                          Hệ thống đang tạm nghỉ nhịp phân tích (HTTP 429)
-                        </span>
-                        <span className="font-mono-num text-xs font-semibold text-[var(--color-primary)]">
-                          Còn {rateLimitState.secondsLeft}s
-                        </span>
+                    <div className="flex items-start gap-3">
+                      <Clock className="h-4.5 w-4.5 shrink-0 text-[var(--color-gold)] mt-0.5" />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-[var(--color-text)]">
+                            Đã hết bản thông minh (API AI) hiện tại (HTTP 429)
+                          </span>
+                          <span className="font-mono-num text-xs font-semibold text-[var(--color-primary)]">
+                            Thử lại sau {rateLimitState.secondsLeft}s
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+                          {rateLimitState.message}
+                        </p>
+                        {autosaveNotice && (
+                          <p className="text-[11px] text-[var(--color-text-muted)]">
+                            {autosaveNotice}
+                          </p>
+                        )}
                       </div>
-                      <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-                        {rateLimitState.message}
-                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        data-testid="fallback-local-btn"
+                        onClick={() => submitMessage({ useLocalFallback: true })}
+                        className="btn-secondary !min-h-8 !px-3 !text-xs whitespace-nowrap"
+                      >
+                        <Cpu className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                        Tiếp tục bằng chế độ phân tích cục bộ
+                      </button>
                     </div>
                   </div>
                 )}
 
-                {/* Network Error Recovery Banner */}
-                {networkError && (
+                {/* Transparent API Error / Missing Key Recovery Banner (Req 7) */}
+                {apiErrorState && (
                   <div
                     role="alert"
-                    className="rounded-xl p-4 border border-[var(--color-danger)]/35 bg-[var(--color-surface)] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    data-testid="api-error-banner"
+                    className="rounded-xl p-4 border border-[var(--color-danger)]/35 bg-[var(--color-surface)] space-y-3"
                   >
                     <div className="flex items-start gap-2.5">
                       <AlertCircle className="h-4.5 w-4.5 shrink-0 text-[var(--color-danger)] mt-0.5" />
                       <div className="text-xs space-y-1">
-                        <p className="font-semibold text-[var(--color-text)]">{networkError}</p>
+                        <p className="font-semibold text-[var(--color-text)]">
+                          {apiErrorState.title}
+                        </p>
+                        <p className="text-[var(--color-text-muted)] leading-relaxed">
+                          {apiErrorState.message}
+                        </p>
                         {autosaveNotice && (
-                          <p className="text-[var(--color-text-muted)]">{autosaveNotice}</p>
+                          <p className="text-[11px] text-[var(--color-text-muted)]">
+                            {autosaveNotice}
+                          </p>
                         )}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => submitMessage()}
-                      className="btn-secondary !min-h-9 !px-3.5 !text-xs shrink-0"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Thử gửi lại
-                    </button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => submitMessage()}
+                        className="btn-secondary !min-h-8 !px-3 !text-xs whitespace-nowrap"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Thử gửi lại với API
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="fallback-local-btn"
+                        onClick={() => submitMessage({ useLocalFallback: true })}
+                        className="btn-primary !min-h-8 !px-3 !text-xs whitespace-nowrap"
+                      >
+                        <Cpu className="h-3.5 w-3.5" />
+                        Tiếp tục bằng chế độ cục bộ
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -896,9 +1169,9 @@ export function LabPage() {
               </div>
             </div>
 
-            {/* Bottom Composer Dock: 3 Contextual Quick Reply Chips + ChatGPT-style Input Bar with Voice Mic */}
+            {/* Bottom Composer Dock */}
             <div className="shrink-0 border-t border-[var(--color-border)]/80 bg-[var(--color-bg)]/95 backdrop-blur-sm px-3 sm:px-6 lg:px-10 py-3">
-              <div className="mx-auto max-w-[800px] space-y-2.5">
+              <div className="mx-auto max-w-[820px] space-y-2.5">
                 {/* 3 Context-Aware Quick Reply Chips */}
                 <div
                   aria-label="Gợi ý phản hồi nhanh"
@@ -914,25 +1187,31 @@ export function LabPage() {
                       type="button"
                       disabled={isBusy || isRateCountdownActive}
                       onClick={() => submitMessage({ overrideText: chip })}
-                      className="shrink-0 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-primary)] hover:bg-[color-mix(in_srgb,var(--color-primary)_6%,var(--color-surface)_94%)] disabled:opacity-45 transition-colors whitespace-nowrap cursor-pointer"
+                      className="shrink-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-primary)] hover:bg-[color-mix(in_srgb,var(--color-primary)_6%,var(--color-surface)_94%)] disabled:opacity-45 transition-colors whitespace-nowrap cursor-pointer"
                     >
                       {chip}
                     </button>
                   ))}
                 </div>
 
-                {/* Live Voice Recording Status Strip */}
+                {/* Live Voice Debate & Anti-Echo Status Strip (Req 4) */}
                 <AnimatePresence>
-                  {(voice.isListening || voice.isSpeaking || voice.handsFreeMode) && (
+                  {(voice.isListening ||
+                    voice.isSpeaking ||
+                    voice.voicePhase === 'cooldown' ||
+                    voice.handsFreeMode) && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
                       className="overflow-hidden"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-1.5 text-xs border border-[color-mix(in_srgb,var(--color-primary)_28%,var(--color-border)_72%)] bg-[color-mix(in_srgb,var(--color-primary)_7%,var(--color-surface)_93%)]">
+                      <div
+                        data-testid="voice-status-strip"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-1.5 text-xs border border-[color-mix(in_srgb,var(--color-primary)_28%,var(--color-border)_72%)] bg-[color-mix(in_srgb,var(--color-primary)_7%,var(--color-surface)_93%)]"
+                      >
                         <div className="flex items-center gap-2 min-w-0">
-                          {voice.isListening ? (
+                          {voice.voicePhase === 'user_listening' ? (
                             <>
                               <span className="flex items-end gap-0.5 h-3.5" aria-hidden="true">
                                 <span className="w-0.5 h-2 rounded-full bg-red-500 animate-bounce" />
@@ -940,7 +1219,7 @@ export function LabPage() {
                                 <span className="w-0.5 h-2.5 rounded-full bg-red-500 animate-bounce" />
                               </span>
                               <span className="font-semibold text-red-600 dark:text-red-400">
-                                Đang lắng nghe tiếng Việt…
+                                Lượt của bạn · Đang lắng nghe tiếng Việt…
                               </span>
                               {voice.interimTranscript && (
                                 <span className="text-[var(--color-text-muted)] truncate">
@@ -948,18 +1227,32 @@ export function LabPage() {
                                 </span>
                               )}
                             </>
-                          ) : voice.isSpeaking ? (
+                          ) : voice.voicePhase === 'ai_speaking' ? (
                             <>
-                              <Volume2 className="h-3.5 w-3.5 text-[var(--color-primary)] animate-pulse" />
+                              <Volume2 className="h-3.5 w-3.5 text-[var(--color-primary)] animate-pulse shrink-0" />
                               <span className="font-medium text-[var(--color-text)]">
-                                Trợ lý Mạch Ngôn đang đọc câu hỏi…
+                                AI đang đọc phản hồi · Micro đã khóa tự động để chống vọng
+                              </span>
+                            </>
+                          ) : voice.voicePhase === 'cooldown' ? (
+                            <>
+                              <ShieldCheck className="h-3.5 w-3.5 text-[var(--color-primary)] shrink-0" />
+                              <span className="text-[var(--color-text-muted)]">
+                                Đang chờ loa lắng âm (chống thu nhầm tiếng AI) trước khi mở Micro…
+                              </span>
+                            </>
+                          ) : voice.voicePhase === 'ai_thinking' ? (
+                            <>
+                              <Sparkles className="h-3.5 w-3.5 text-[var(--color-primary)] animate-pulse shrink-0" />
+                              <span className="text-[var(--color-text-muted)]">
+                                AI đang phân tích lập luận của bạn (Micro tạm nghỉ)…
                               </span>
                             </>
                           ) : (
                             <>
-                              <Headphones className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                              <Headphones className="h-3.5 w-3.5 text-[var(--color-primary)] shrink-0" />
                               <span className="text-[var(--color-text-muted)]">
-                                Chế độ rảnh tay đang bật: AI đọc xong sẽ tự mở Micro nghe bạn trả lời.
+                                Tranh biện rảnh tay đang bật: Luân phiên lượt nói — khóa Micro khi AI đọc để không thu nhầm giọng AI.
                               </span>
                             </>
                           )}
@@ -978,7 +1271,7 @@ export function LabPage() {
                   )}
                 </AnimatePresence>
 
-                {/* Composer Form */}
+                {/* Composer Form with File Attachment Support (Req 5) */}
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -986,6 +1279,47 @@ export function LabPage() {
                   }}
                   className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 sm:p-3 transition-colors focus-within:border-[var(--color-primary)]/60 shadow-2xs"
                 >
+                  {/* Attachment Preview Chips */}
+                  {attachments.length > 0 && (
+                    <div
+                      data-testid="composer-attachments"
+                      className="mb-2 flex flex-wrap items-center gap-2 pb-2 border-b border-[var(--color-border)]/70"
+                    >
+                      {attachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-xs"
+                        >
+                          {att.kind === 'image' && att.previewUrl ? (
+                            <img
+                              src={att.previewUrl}
+                              alt={att.name}
+                              className="h-6 w-6 rounded object-cover border border-[var(--color-border)] shrink-0"
+                            />
+                          ) : (
+                            <FileText className="h-4 w-4 text-[var(--color-primary)] shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <span className="block max-w-[160px] truncate font-medium text-[var(--color-text)]">
+                              {att.name}
+                            </span>
+                            <span className="block text-[10px] text-[var(--color-text-muted)] font-mono-num">
+                              {formatFileSize(att.size)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAttachment(att.id)}
+                            aria-label={`Gỡ tệp ${att.name}`}
+                            className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <label htmlFor="lab-composer-textarea" className="sr-only">
                     Nhập hoặc nói quan điểm tranh biện của bạn
                   </label>
@@ -1005,14 +1339,36 @@ export function LabPage() {
                       voice.isListening
                         ? 'Hãy nói suy nghĩ của bạn bằng tiếng Việt…'
                         : activeSession.labType === 'concept'
-                          ? 'Nhập khái niệm hoặc bấm Micro để nói… (Enter để gửi, Shift+Enter xuống dòng)'
-                          : 'Trả lời câu hỏi gợi mở hoặc bấm Micro để nói… (Enter để gửi, Shift+Enter xuống dòng)'
+                          ? 'Nhập khái niệm, đính kèm tài liệu hoặc bấm Micro để nói… (Enter để gửi)'
+                          : 'Nhập quan điểm tranh biện, đính kèm dẫn chứng hoặc bấm Micro để nói…'
                     }
                     className="w-full bg-transparent px-2 py-1 text-sm leading-relaxed text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]/75 focus:outline-none resize-none"
                   />
 
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,.pdf"
+                    onChange={handleFileSelect}
+                    data-testid="lab-file-input"
+                    className="hidden"
+                  />
+
                   <div className="mt-2 pt-2 border-t border-[var(--color-border)]/70 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--color-text-muted)]">
+                      <button
+                        type="button"
+                        disabled={isBusy || attachments.length >= MAX_LAB_ATTACHMENTS}
+                        onClick={() => fileInputRef.current?.click()}
+                        data-testid="attach-file-btn"
+                        title="Đính kèm văn bản (.txt, .md, .csv, .json), ảnh (.png, .jpg, .webp) hoặc PDF tối đa 4 MB"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-primary)] disabled:opacity-45 transition-colors whitespace-nowrap cursor-pointer"
+                      >
+                        <Paperclip className="h-3.5 w-3.5" />
+                        Đính kèm ({attachments.length}/{MAX_LAB_ATTACHMENTS})
+                      </button>
+
                       {activeSession.messages.length >= 2 && (
                         <button
                           type="button"
@@ -1026,13 +1382,15 @@ export function LabPage() {
                           className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-primary)] hover:underline disabled:opacity-45 transition-colors whitespace-nowrap cursor-pointer"
                         >
                           <MapIcon className="h-3 w-3" />
-                          Tổng kết · Bản đồ tư duy
+                          Bản đồ tư duy
                         </button>
                       )}
+
                       <button
                         type="button"
                         disabled={isBusy || isRateCountdownActive}
                         onClick={() => submitMessage({ simulate429: true })}
+                        data-testid="simulate-429-btn"
                         className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-primary)] disabled:opacity-45 transition-colors cursor-pointer"
                       >
                         <Clock className="h-3 w-3" />
@@ -1041,11 +1399,11 @@ export function LabPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {/* Microphone Button (STT vi-VN) with red recording pulse */}
+                      {/* Microphone Button (STT vi-VN) */}
                       <button
                         type="button"
                         onClick={voice.toggleListening}
-                        disabled={isBusy || isRateCountdownActive}
+                        disabled={isBusy || isRateCountdownActive || voice.voicePhase === 'cooldown'}
                         aria-pressed={voice.isListening}
                         aria-label={
                           voice.isListening
@@ -1055,7 +1413,9 @@ export function LabPage() {
                         title={
                           voice.isListening
                             ? 'Bấm để dừng thu âm'
-                            : 'Nói bằng giọng tiếng Việt'
+                            : voice.isSpeaking
+                              ? 'Bấm để ngắt giọng AI và nói ngay'
+                              : 'Nói bằng giọng tiếng Việt'
                         }
                         className={`relative inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer disabled:opacity-45 ${
                           voice.isListening
@@ -1079,8 +1439,13 @@ export function LabPage() {
                       {/* Primary Send Button */}
                       <button
                         type="submit"
-                        disabled={isBusy || isRateCountdownActive || !composerText.trim()}
-                        className="btn-primary !min-h-9 !px-4 !py-1.5 !text-xs"
+                        disabled={
+                          isBusy ||
+                          isRateCountdownActive ||
+                          (!composerText.trim() && attachments.length === 0)
+                        }
+                        data-testid="lab-send-btn"
+                        className="btn-primary !min-h-9 !px-4 !py-1.5 !text-xs whitespace-nowrap"
                       >
                         <Send className="h-3.5 w-3.5" />
                         {isBusy
@@ -1096,11 +1461,10 @@ export function LabPage() {
             </div>
           </div>
 
-          {/* Unified Right Collapsible Drawer for ArgumentLedger (Desktop + Mobile) */}
+          {/* Unified Right Collapsible Drawer for ArgumentLedger */}
           <AnimatePresence>
             {ledgerOpen && (
               <>
-                {/* Backdrop on smaller screens so clicking outside closes smoothly */}
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1147,6 +1511,15 @@ export function LabPage() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Session Report Modal (Req 2) */}
+      <SessionReportModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        session={activeSession}
+        attachedResource={attachedResource}
+        onNotify={(msg, variant = 'info') => showToast(msg, { variant })}
+      />
     </WorkspaceShell>
   );
 }

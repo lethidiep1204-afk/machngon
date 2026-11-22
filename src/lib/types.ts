@@ -122,6 +122,31 @@ export interface LibraryConcept {
 
 export type LabType = 'concept' | 'debate';
 
+export type LabDifficultyLevel = 'basic' | 'intermediate' | 'advanced';
+
+export interface LabAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: 'text' | 'image' | 'pdf';
+  textContent?: string;
+  base64Data?: string;
+  previewUrl?: string;
+}
+
+export type EvidenceVerificationStatus = 'verified' | 'partial' | 'unverified';
+
+export interface EvidenceVerification {
+  status: EvidenceVerificationStatus;
+  /** Các ý đã có dẫn chứng rõ ràng hoặc khớp với tài liệu/tệp đính kèm */
+  groundedClaims: string[];
+  /** Các ý chưa có nguồn xác thực hoặc đang dựa trên nhận định chủ quan */
+  unverifiedClaims: string[];
+  /** Cảnh báo cụ thể khi thiếu dẫn chứng hoặc cần kiểm chứng nguồn */
+  warning?: string | null;
+}
+
 export type LabActionIntent =
   | 'explain'
   | 'analyze_concept'
@@ -137,18 +162,24 @@ export interface DebateStepItem {
 }
 
 export interface ThreeLayerResponse {
-  /** Lớp 1 – Tóm tắt ý chính (TL;DR / Phản hồi trực diện, tối đa 2 câu) */
+  /** Lớp 1 – Tóm tắt ý chính / Công nhận trực diện bám sát câu trả lời vừa nêu */
   tldr?: string;
-  /** Cơ sở / dữ kiện khách quan (nằm trong Lớp 2 – Phân tích chi tiết) */
+  /** Điểm tích cực / điểm hợp lý trong quan điểm người dùng */
+  positivePoints?: string[];
+  /** Điểm hạn chế / điểm cần phản biện bám sát chủ đề người dùng nêu */
+  negativePoints?: string[];
+  /** Cơ sở / dữ kiện khách quan */
   facts: string;
-  /** Giả định ngầm (nằm trong Lớp 2 – Phân tích chi tiết) */
+  /** Giả định ngầm */
   assumptions: string;
-  /** Góc nhìn phản biện / Điểm hở logic / Ví dụ minh họa (nằm trong Lớp 2 – Phân tích chi tiết) */
+  /** Góc nhìn phản biện / Điểm hở logic / Ví dụ minh họa bám sát chủ đề */
   interpretation: string;
-  /** Lớp 3 – Đúng 1 câu hỏi sắc bén, dễ hiểu cho lượt tiếp theo */
+  /** Lớp 3 – Đúng 1 câu hỏi Socrates sắc bén, ngắn gọn xoáy thẳng vào lập luận vừa nêu */
   guidingQuestion: string;
   /** Gợi ý ngắn gọn giúp người dùng dễ trả lời câu hỏi ở Lớp 3 */
   questionHint?: string;
+  /** Kiểm lại nguồn và trạng thái dẫn chứng */
+  evidenceCheck?: EvidenceVerification;
 }
 
 export interface LedgerEntry {
@@ -171,12 +202,20 @@ export interface LabMessage {
   debateSteps?: DebateStepItem[];
   sourceEngine?: 'openai-responses' | 'gemini' | 'local-fallback';
   responseId?: string;
+  attachments?: Array<{
+    id: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    kind: 'text' | 'image' | 'pdf';
+  }>;
 }
 
 export interface LabSession {
   id: string;
   title: string;
   labType: LabType;
+  difficulty?: LabDifficultyLevel;
   resourceContextId?: string;
   previousResponseId?: string;
   messages: LabMessage[];
@@ -195,8 +234,10 @@ export interface LabSession {
 export interface LabApiRequestPayload {
   session_id: string;
   lab_type: LabType;
+  difficulty?: LabDifficultyLevel;
   message: string;
   resource_context_id?: string | null;
+  attachments?: LabAttachment[];
   history?: Array<{
     role: 'user' | 'assistant';
     content: string;
@@ -220,6 +261,40 @@ export interface LabApiResponsePayload {
   contradiction_ref?: string | null;
   debate_steps: DebateStepItem[];
   three_layer: ThreeLayerResponse;
+}
+
+export interface SessionReportData {
+  sessionId: string;
+  title: string;
+  labType: LabType;
+  difficultyLabel: string;
+  generatedAtIso: string;
+  userTurnsCount: number;
+  aiTurnsCount: number;
+  attachedResourceTitle?: string | null;
+  attachedFileNames: string[];
+  keyArguments: Array<{
+    ref: string;
+    speaker: 'user' | 'ai';
+    claim: string;
+    contradictionFlag?: string;
+  }>;
+  strengths: string[];
+  weaknesses: string[];
+  coreAssumptions: string[];
+  coreQuestions: Array<{
+    turnRef: string;
+    question: string;
+  }>;
+  evidenceSummary: {
+    overallStatus: EvidenceVerificationStatus;
+    verifiedCount: number;
+    partialCount: number;
+    unverifiedCount: number;
+    groundedClaims: string[];
+    unverifiedClaims: string[];
+    warnings: string[];
+  };
 }
 
 export interface UserNotificationPrefs {

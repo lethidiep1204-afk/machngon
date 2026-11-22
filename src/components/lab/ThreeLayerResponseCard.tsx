@@ -1,16 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Compass,
   CornerDownRight,
   Map as MapIcon,
   Quote,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Square,
   Volume2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { getEvidenceStatusLabel } from '../../lib/ai/sessionReport';
 import { LabMessage } from '../../lib/types';
 import { DebateStepperAccordion } from './DebateStepper5';
 
@@ -61,9 +66,6 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
   });
 }
 
-/**
- * Airy Markdown renderer for short paragraphs, bullet lists, and bold emphasis.
- */
 function ConversationalMarkdown({
   text,
   className = '',
@@ -141,13 +143,6 @@ function isThinkingTraceMap(text: string): boolean {
   );
 }
 
-/**
- * ChatGPT / Gemini-inspired minimalist Socratic conversation bubble:
- * - Clean airy body (Markdown paragraphs + bold emphasis + smooth streaming typing effect)
- * - Highlighted editorial blockquote callout for the ONE Socratic closing question
- * - Built-in Vietnamese TTS speaker button in the top-right corner
- * - Optional collapsed drawer for underlying assumptions, evidence, and 5-step trace
- */
 export function ThreeLayerResponseCard({
   message,
   onQuoteToComposer,
@@ -180,7 +175,6 @@ export function ThreeLayerResponseCard({
     [layers, openingText]
   );
 
-  // Smooth word-chunk streaming effect for newly received AI messages
   const [revealedCount, setRevealedCount] = useState<number>(() =>
     animateTyping ? 0 : fullBodyText.length
   );
@@ -195,7 +189,7 @@ export function ThreeLayerResponseCard({
     const total = fullBodyText.length;
     if (total === 0) return;
 
-    const stepSize = Math.max(4, Math.ceil(total / 38));
+    const stepSize = Math.max(4, Math.ceil(total / 34));
     const timer = window.setInterval(() => {
       setRevealedCount((prev) => {
         if (prev + stepSize >= total) {
@@ -211,6 +205,12 @@ export function ThreeLayerResponseCard({
 
   const isStreaming = revealedCount < fullBodyText.length;
   const visibleBodyText = isStreaming ? fullBodyText.slice(0, revealedCount) : fullBodyText;
+
+  const hasBalancedCritique = Boolean(
+    layers &&
+      ((layers.positivePoints && layers.positivePoints.length > 0) ||
+        (layers.negativePoints && layers.negativePoints.length > 0))
+  );
 
   const hasDetailsDrawer = Boolean(
     (layers && (layers.assumptions.trim().length > 0 || layers.facts.trim().length > 0)) ||
@@ -232,9 +232,9 @@ export function ThreeLayerResponseCard({
 
       {/* Main Conversational Bubble */}
       <div className="flex-1 min-w-0 space-y-3.5">
-        {/* Quiet Top Row: Name + Turn Ref + Speaker + Quote */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+        {/* Quiet Top Row: Name + Turn Ref + Local Fallback honesty tag + Speaker + Quote */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-muted)]">
             <span className="font-semibold text-[var(--color-text)]">Trợ lý Mạch Ngôn</span>
             {message.turnRef && (
               <>
@@ -244,11 +244,22 @@ export function ThreeLayerResponseCard({
                 </span>
               </>
             )}
+            {message.sourceEngine === 'local-fallback' && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-[11px] font-medium text-[var(--color-gold)]">
+                  Chế độ phân tích cục bộ
+                </span>
+              </>
+            )}
             {isMapCard && (
-              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[color-mix(in_srgb,var(--color-primary)_10%,var(--color-surface)_90%)] text-[var(--color-primary)]">
-                <MapIcon className="h-2.5 w-2.5" />
-                Bản đồ tư duy
-              </span>
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-primary)]">
+                  <MapIcon className="h-3 w-3" />
+                  Bản đồ tư duy
+                </span>
+              </>
             )}
           </div>
 
@@ -297,7 +308,7 @@ export function ThreeLayerResponseCard({
           </div>
         </div>
 
-        {/* Clean Dialogue Body (with smooth streaming cursor while typing) */}
+        {/* Clean Dialogue Body */}
         <div
           onClick={() => {
             if (isStreaming) setRevealedCount(fullBodyText.length);
@@ -333,6 +344,96 @@ export function ThreeLayerResponseCard({
           )}
         </div>
 
+        {/* Balanced Critique Grid: Điểm tích cực & Điểm hạn chế / Cần phản biện */}
+        {hasBalancedCritique && !isStreaming && layers && (
+          <div
+            data-testid="balanced-critique-box"
+            className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          >
+            {layers.positivePoints && layers.positivePoints.length > 0 && (
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  <span>Điểm tích cực / hợp lý</span>
+                </div>
+                <ul className="space-y-1 text-xs sm:text-[13px] leading-relaxed text-[var(--color-text)] list-disc pl-4">
+                  {layers.positivePoints.map((pt, idx) => (
+                    <li key={idx}>{renderInlineMarkdown(pt)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {layers.negativePoints && layers.negativePoints.length > 0 && (
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-gold)]">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span>Điểm hạn chế / cần phản biện</span>
+                </div>
+                <ul className="space-y-1 text-xs sm:text-[13px] leading-relaxed text-[var(--color-text)] list-disc pl-4">
+                  {layers.negativePoints.map((pt, idx) => (
+                    <li key={idx}>{renderInlineMarkdown(pt)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Evidence & Source Verification Block */}
+        {layers?.evidenceCheck && !isStreaming && (
+          <div
+            data-testid="evidence-verification-box"
+            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/65 px-3.5 py-3 space-y-2 text-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]">
+                {layers.evidenceCheck.status === 'verified' ? (
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                ) : (
+                  <ShieldAlert className="h-3.5 w-3.5 text-[var(--color-gold)] shrink-0" />
+                )}
+                Kiểm chứng dẫn chứng &amp; nguồn
+              </span>
+              <span
+                className={`text-[11px] font-semibold ${
+                  layers.evidenceCheck.status === 'verified'
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-[var(--color-gold)]'
+                }`}
+              >
+                {getEvidenceStatusLabel(layers.evidenceCheck.status)}
+              </span>
+            </div>
+
+            {layers.evidenceCheck.groundedClaims.length > 0 && (
+              <p className="text-[12px] leading-relaxed text-[var(--color-text)]">
+                <strong className="text-emerald-700 dark:text-emerald-400">Có căn cứ: </strong>
+                {layers.evidenceCheck.groundedClaims.join(' · ')}
+              </p>
+            )}
+
+            {layers.evidenceCheck.unverifiedClaims.length > 0 && (
+              <p className="text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                <strong className="text-[var(--color-text)]">Chưa có nguồn xác thực: </strong>
+                {layers.evidenceCheck.unverifiedClaims.join(' · ')}
+              </p>
+            )}
+
+            {layers.evidenceCheck.warning && (
+              <p
+                className="rounded-lg border px-2.5 py-1.5 text-[11.5px] leading-relaxed text-[var(--color-text)]"
+                style={{
+                  backgroundColor: 'var(--color-warn-bg)',
+                  borderColor: 'var(--color-warn-border)',
+                }}
+              >
+                {layers.evidenceCheck.warning}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Highlighted Editorial Callout for the ONE Socratic Closing Question */}
         {layers?.guidingQuestion && !isStreaming && (
           <motion.blockquote
@@ -340,7 +441,7 @@ export function ThreeLayerResponseCard({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             aria-label="Câu hỏi Socrates chốt hạ"
-            className="rounded-r-xl rounded-l-md border border-[color-mix(in_srgb,var(--color-primary)_26%,var(--color-border)_74%)] border-l-4 border-l-[var(--color-primary)] px-4 py-3.5 sm:px-5 sm:py-4 space-y-2.5"
+            className="rounded-xl border border-[color-mix(in_srgb,var(--color-primary)_30%,var(--color-border)_70%)] px-4 py-3.5 sm:px-5 sm:py-4 space-y-2.5"
             style={{
               backgroundColor:
                 'color-mix(in srgb, var(--color-primary) 7%, var(--color-surface) 93%)',
@@ -348,14 +449,12 @@ export function ThreeLayerResponseCard({
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-semibold tracking-wide text-[var(--color-primary)]">
-                Câu hỏi gợi mở dành cho bạn
+                Câu hỏi Socrates trọng tâm
               </span>
               {onSpeakMessage && (
                 <button
                   type="button"
-                  onClick={() =>
-                    onSpeakMessage(layers.guidingQuestion, `${message.id}_q`)
-                  }
+                  onClick={() => onSpeakMessage(layers.guidingQuestion, `${message.id}_q`)}
                   aria-label="Nghe câu hỏi gợi mở"
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
                 >
