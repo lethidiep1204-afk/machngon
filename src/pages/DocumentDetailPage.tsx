@@ -1,0 +1,1291 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Bookmark,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  ExternalLink,
+  FileWarning,
+  Lightbulb,
+  List,
+  Maximize2,
+  Minimize2,
+  NotebookPen,
+  Pencil,
+  Share2,
+  Sparkles,
+  Trash2,
+  Type,
+  X,
+} from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { WorkspaceShell } from '../components/layout/AppShell';
+import {
+  ConceptPopoverDialog,
+  renderTextWithConceptHighlights,
+} from '../components/library/ConceptTooltip';
+import {
+  LibraryLabActionOption,
+  LibraryToLabActionsMenu,
+} from '../components/library/LibraryToLabActions';
+import { LibraryFontSizeControl } from '../components/library/LibraryFontSizeControl';
+import { useToast } from '../components/ui/ToastProvider';
+import { ChapterDividerSvg } from '../components/visuals/EditorialSvgIllustrations';
+import { HybridMediaCard } from '../components/visuals/ThemeSyncedHero';
+import { LIBRARY_CONCEPTS } from '../data/library/concepts';
+import { useApp } from '../lib/AppContext';
+import { getRelatedDocuments } from '../lib/library/recommendations';
+import {
+  getDifficultyLabel,
+  isDocumentVerified,
+  isSafeHttpUrl,
+} from '../lib/library/validation';
+import { Link, useRouter } from '../lib/router';
+import {
+  loadReadingScrollPosition,
+  READING_FONT_SIZE_OPTIONS,
+  ReadingFontSize,
+  saveReadingScrollPosition,
+  setLabHandoff,
+} from '../lib/storage';
+import { DocumentBlock, LabActionIntent, LabType, LibraryConcept } from '../lib/types';
+
+interface SelectionPopoverState {
+  text: string;
+  x: number;
+  y: number;
+}
+
+function formatNoteTimestamp(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return '';
+  }
+}
+
+export function DocumentDetailPage({ documentId }: { documentId: string }) {
+  const {
+    documents,
+    publishedDocuments,
+    savedDocIds,
+    toggleSavedDoc,
+    notes,
+    addReadingNote,
+    updateReadingNote,
+    deleteReadingNote,
+    layoutPrefs,
+    updateLayoutPrefs,
+  } = useApp();
+  const { showToast } = useToast();
+  const { navigate, search: urlSearch } = useRouter();
+
+  const isAdminPreview = useMemo(
+    () => new URLSearchParams(urlSearch).get('preview') === 'admin',
+    [urlSearch]
+  );
+
+  // Strict lookup — NEVER fall back silently to documents[0]
+  const doc = useMemo(
+    () => documents.find((d) => d.id === documentId) ?? null,
+    [documents, documentId]
+  );
+
+  const relatedDocs = useMemo(
+    () => (doc ? getRelatedDocuments(doc, publishedDocuments, 3) : []),
+    [doc, publishedDocuments]
+  );
+
+  const docConcepts = useMemo(() => {
+    if (!doc) return [];
+    const idSet = new Set(doc.relatedConceptIds ?? []);
+    return LIBRARY_CONCEPTS.filter(
+      (c) => idSet.has(c.id) || c.documentIds.includes(doc.id)
+    );
+  }, [doc]);
+
+  const docNotes = useMemo(
+    () => (doc ? notes.filter((n) => n.documentId === doc.id) : []),
+    [notes, doc]
+  );
+
+  const [focusMode, setFocusMode] = useState(false);
+  const [readProgress, setReadProgress] = useState(0);
+  const [activeSectionId, setActiveSectionId] = useState<string>(doc?.sections[0]?.id ?? '');
+  const [noteInput, setNoteInput] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteValue, setEditingNoteValue] = useState('');
+  const [openBlockMenuId, setOpenBlockMenuId] = useState<string | null>(null);
+  const [selectionPopover, setSelectionPopover] = useState<SelectionPopoverState | null>(null);
+  const [activeConcept, setActiveConcept] = useState<LibraryConcept | null>(null);
+
+  const [slideOverToolsOpen, setSlideOverToolsOpen] = useState(false);
+  const [mobileSheet, setMobileSheet] = useState<'none' | 'toc' | 'tools'>('none');
+  const [restoredBanner, setRestoredBanner] = useState<string | null>(null);
+
+  const articleRef = useRef<HTMLElement | null>(null);
+  const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const fontSize: ReadingFontSize = layoutPrefs.readingFontSize ?? 'md';
+
+  // Reset active section when switching documents
+  useEffect(() => {
+    if (doc?.sections[0]?.id) {
+      setActiveSectionId(doc.sections[0].id);
+    }
+    setOpenBlockMenuId(null);
+    setSelectionPopover(null);
+    setEditingNoteId(null);
+  }, [doc?.id]);
+
+  // Restore saved reading position from sessionStorage (`machngon_read_pos_{resource_id}`)
+  useEffect(() => {
+    if (!doc || doc.status !== 'published') return;
+    const saved = loadReadingScrollPosition(doc.id);
+    if (saved && saved.scrollY > 120) {
+      const timer = window.setTimeout(() => {
+        window.scrollTo({ top: saved.scrollY, behavior: 'smooth' });
+        setRestoredBanner(`Đã quay lại vị trí đọc gần nhất (${Math.round(saved.scrollPercent)}%).`);
+        window.setTimeout(() => setRestoredBanner(null), 3500);
+      }, 160);
+      return () => window.clearTimeout(timer);
+    }
+  }, [doc?.id, doc?.status]);
+
+  // Track reading progress + debounce 400ms scroll persistence
+  useEffect(() => {
+    if (!doc || doc.status !== 'published') return;
+    let debounceTimer: number | undefined;
+
+    const handleScroll = () => {
+      const scrollY = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const pct = docHeight > 0 ? Math.min(100, Math.max(0, (scrollY / docHeight) * 100)) : 0;
+      setReadProgress(pct);
+
+      let nearest = doc.sections[0]?.id;
+      for (const sec of doc.sections) {
+        const el = document.getElementById(sec.id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top <= 160) {
+            nearest = sec.id;
+          }
+        }
+      }
+      if (nearest) setActiveSectionId(nearest);
+
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        saveReadingScrollPosition(doc.id, {
+          scrollPercent: pct,
+          scrollY,
+          nearestHeadingId: nearest,
+          updatedAt: new Date().toISOString(),
+        });
+      }, 400);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.clearTimeout(debounceTimer);
+    };
+  }, [doc]);
+
+  // Keyboard shortcut 'F' to toggle Focus Mode, 'Esc' to close popovers/Focus Mode
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable);
+      if (isEditable) return;
+      if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setFocusMode((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        if (openBlockMenuId) setOpenBlockMenuId(null);
+        else if (selectionPopover) setSelectionPopover(null);
+        else if (focusMode) setFocusMode(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [focusMode, openBlockMenuId, selectionPopover]);
+
+  // Desktop text selection (15–600 characters) floating 5-action Popover
+  const handleArticleMouseUp = useCallback(() => {
+    if (window.innerWidth < 1024) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) {
+      setSelectionPopover(null);
+      return;
+    }
+    const text = sel.toString().replace(/\s+/g, ' ').trim();
+    if (text.length < 15 || text.length > 600) {
+      setSelectionPopover(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    setSelectionPopover({
+      text,
+      x: Math.max(190, Math.min(window.innerWidth - 190, rect.left + rect.width / 2)),
+      y: Math.max(88, rect.top - 12),
+    });
+  }, []);
+
+  // Handoff to Thinking Lab (prefills Composer without auto-sending, saves current scroll first)
+  const handoffToLab = (
+    labType: LabType,
+    quoteText: string,
+    options?: {
+      blockLabel?: string;
+      sectionId?: string;
+      sectionTitle?: string;
+      actionIntent?: LabActionIntent;
+    }
+  ) => {
+    if (!doc) return;
+    const scrollY = window.scrollY;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const pct = docHeight > 0 ? Math.min(100, Math.max(0, (scrollY / docHeight) * 100)) : 0;
+    saveReadingScrollPosition(doc.id, {
+      scrollPercent: pct,
+      scrollY,
+      nearestHeadingId: options?.sectionId ?? activeSectionId,
+      updatedAt: new Date().toISOString(),
+    });
+    const matchedSection = doc.sections.find(
+      (s) => s.id === (options?.sectionId ?? activeSectionId)
+    );
+    setLabHandoff({
+      labType,
+      resourceContextId: doc.id,
+      resourceTitle: doc.title,
+      quoteText,
+      blockLabel: options?.blockLabel,
+      sectionId: options?.sectionId ?? activeSectionId,
+      sectionTitle: options?.sectionTitle ?? matchedSection?.title,
+      actionIntent: options?.actionIntent,
+    });
+    setOpenBlockMenuId(null);
+    setSelectionPopover(null);
+    navigate(`/lab?mode=${labType}&resource=${encodeURIComponent(doc.id)}`);
+  };
+
+  const handleLabActionSelect = (
+    option: LibraryLabActionOption,
+    quoteText: string,
+    blockMeta?: { blockLabel?: string; sectionId?: string; sectionTitle?: string }
+  ) => {
+    handoffToLab(option.labType, quoteText, {
+      ...blockMeta,
+      actionIntent: option.intent,
+    });
+  };
+
+  // Trigger "Ghi chú" action smoothly across all breakpoints
+  const handleOpenNotes = () => {
+    if (window.innerWidth < 1024) {
+      setMobileSheet('tools');
+      return;
+    }
+    if (window.innerWidth < 1280) {
+      setSlideOverToolsOpen(true);
+      return;
+    }
+    if (!layoutPrefs.rightPanelOpenDesktop) {
+      updateLayoutPrefs({ rightPanelOpenDesktop: true });
+    }
+    window.setTimeout(() => {
+      noteTextareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      noteTextareaRef.current?.focus();
+    }, 80);
+  };
+
+  // 1. NOT FOUND state (fixes previous silent fallback to documents[0])
+  if (!doc) {
+    return (
+      <WorkspaceShell>
+        <div className="mx-auto max-w-2xl px-6 py-20 text-center space-y-5">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-elevated)] text-[var(--color-primary)]">
+            <AlertCircle className="h-7 w-7" aria-hidden="true" />
+          </div>
+          <h1 className="font-display text-2xl sm:text-3xl font-bold text-[var(--color-text)]">
+            Không tìm thấy tài liệu
+          </h1>
+          <p className="font-reading text-sm sm:text-base text-[var(--color-text-muted)] max-w-md mx-auto leading-relaxed">
+            Liên kết tài liệu bạn truy cập không tồn tại hoặc đã được di chuyển khỏi Thư viện Tri thức.
+          </p>
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+            <Link to="/library" className="btn-primary">
+              <ArrowLeft className="h-4 w-4" />
+              Quay lại Thư viện Tri thức
+            </Link>
+            <Link to="/lab" className="btn-secondary">
+              Mở Thinking Lab
+            </Link>
+          </div>
+        </div>
+      </WorkspaceShell>
+    );
+  }
+
+  // 2. DRAFT guard (never expose drafts publicly unless explicitly previewed from Admin)
+  if (doc.status !== 'published' && !isAdminPreview) {
+    return (
+      <WorkspaceShell>
+        <div className="mx-auto max-w-2xl px-6 py-20 text-center space-y-5">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-elevated)] text-[var(--color-gold)]">
+            <FileWarning className="h-7 w-7" aria-hidden="true" />
+          </div>
+          <h1 className="font-display text-2xl sm:text-3xl font-bold text-[var(--color-text)]">
+            Tài liệu đang ở trạng thái bản nháp
+          </h1>
+          <p className="font-reading text-sm sm:text-base text-[var(--color-text-muted)] max-w-md mx-auto leading-relaxed">
+            Bài đọc “{doc.title}” hiện đang trong quá trình biên tập và kiểm chứng nguồn nên chưa được công bố trong Thư viện.
+          </p>
+          <div className="pt-2">
+            <Link to="/library" className="btn-primary">
+              <ArrowLeft className="h-4 w-4" />
+              Khám phá tài liệu đã xuất bản
+            </Link>
+          </div>
+        </div>
+      </WorkspaceShell>
+    );
+  }
+
+  const isSaved = savedDocIds.includes(doc.id);
+  const verified = isDocumentVerified(doc);
+  const activeSectionTitle =
+    doc.sections.find((s) => s.id === activeSectionId)?.title ?? doc.sections[0]?.title;
+
+  const renderBlock = (block: DocumentBlock, idx: number) => {
+    const menuOpen = openBlockMenuId === block.id;
+    const isConceptBlock = block.type === 'concept';
+    const isQuoteBlock = block.type === 'quote';
+    const isCounterBlock = block.type === 'counterargument';
+    const isQuestionBlock = block.type === 'question';
+    const isOpeningProse = idx === 0 && block.type === 'prose';
+    const sectionObj = doc.sections.find((s) => s.id === block.sectionId);
+
+    const containerClass = isConceptBlock
+      ? 'my-8 rounded-2xl p-6 sm:p-7 border'
+      : isQuoteBlock
+        ? 'my-8 py-6 px-5 sm:px-7 border-y border-[var(--color-border)] bg-[var(--color-bg)]/45'
+        : isCounterBlock
+          ? 'my-8 rounded-2xl p-5 sm:p-6 border border-[var(--color-border)] bg-[var(--color-surface)]'
+          : isQuestionBlock
+            ? 'my-8 rounded-2xl p-5 sm:p-6 border border-[var(--color-border-strong)]/60 surface-subtle'
+            : 'my-6';
+
+    const renderedContent =
+      isQuoteBlock || isQuestionBlock
+        ? block.content
+        : renderTextWithConceptHighlights(block.content, docConcepts, (concept) =>
+            setActiveConcept(concept)
+          );
+
+    return (
+      <div
+        key={block.id}
+        id={block.heading ? block.sectionId : undefined}
+        className={`relative scroll-mt-24 ${containerClass}`}
+        style={
+          isConceptBlock
+            ? {
+                backgroundColor:
+                  'color-mix(in srgb, var(--color-gold) 11%, var(--color-surface) 89%)',
+                borderColor:
+                  'color-mix(in srgb, var(--color-gold) 40%, var(--color-border) 60%)',
+              }
+            : undefined
+        }
+      >
+        {/* Top Row: Block label/heading + 5-Action "Khám phá với AI" trigger */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            {isConceptBlock ? (
+              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-primary)] mb-1.5">
+                {block.label || 'Khái niệm trọng tâm'}
+              </div>
+            ) : (
+              block.label && (
+                <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-gold)] mb-1.5">
+                  {block.label}
+                </div>
+              )
+            )}
+            {block.heading && (
+              <h2 className="font-display lib-scale-h2 font-semibold text-[var(--color-text)]">
+                {block.heading}
+              </h2>
+            )}
+          </div>
+
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setOpenBlockMenuId(menuOpen ? null : block.id)}
+              aria-expanded={menuOpen}
+              aria-label={`Khám phá với AI về khối ${block.heading || block.label || idx + 1}`}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 min-h-9 sm:min-h-8 text-xs font-medium border border-[var(--color-border)] bg-[var(--color-surface)]/95 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/45 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Khám phá với AI</span>
+            </button>
+
+            <AnimatePresence>
+              {menuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                  transition={{ duration: 0.16 }}
+                  className="absolute right-0 mt-1.5 z-30 w-72 sm:w-80 rounded-2xl p-2.5 border border-[var(--color-border-strong)] bg-[var(--color-surface)]"
+                  style={{ boxShadow: 'var(--shadow-float)' }}
+                >
+                  <div className="flex items-center justify-between px-2 pb-2 mb-1.5 border-b border-[var(--color-border)]">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+                      Chọn cách khám phá trong Lab
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setOpenBlockMenuId(null)}
+                      aria-label="Đóng menu"
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <LibraryToLabActionsMenu
+                    compact
+                    onSelectAction={(option) =>
+                      handleLabActionSelect(option, block.content, {
+                        blockLabel: isConceptBlock
+                          ? 'Khái niệm trọng tâm'
+                          : block.label || block.heading,
+                        sectionId: block.sectionId,
+                        sectionTitle: sectionObj?.title,
+                      })
+                    }
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        <p
+          className={`mt-3.5 ${
+            isQuoteBlock
+              ? 'lib-scale-quote italic text-[var(--color-text)]'
+              : 'editorial-prose'
+          } ${isOpeningProse ? 'editorial-dropcap' : ''}`}
+        >
+          {renderedContent}
+        </p>
+
+        {block.citation && (
+          <footer className="mt-4 pt-3 border-t border-[var(--color-border)]/80 font-reading lib-scale-small italic text-[var(--color-text-muted)]">
+            Nguồn tham chiếu: {block.citation}
+          </footer>
+        )}
+      </div>
+    );
+  };
+
+  const renderRightSidebarContent = () => (
+    <div className="space-y-6">
+      {/* Interactive Key Concepts in this Document */}
+      {docConcepts.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
+            <h3 className="font-display text-base font-semibold text-[var(--color-text)]">
+              Thuật ngữ trọng tâm
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {docConcepts.map((concept) => (
+              <button
+                key={concept.id}
+                type="button"
+                onClick={() => setActiveConcept(concept)}
+                className="w-full text-left rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/55 p-3 hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-surface-elevated)]/60 transition-colors cursor-pointer"
+              >
+                <div className="text-xs font-semibold text-[var(--color-primary)]">
+                  {concept.term}
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)] line-clamp-2">
+                  {concept.shortDefinition}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Related Documents (via unified recommendations engine) */}
+      <div className={docConcepts.length > 0 ? 'pt-5 border-t border-[var(--color-border)]' : ''}>
+        <h3 className="font-display text-base font-semibold text-[var(--color-text)] mb-3">
+          Tài liệu liên quan
+        </h3>
+        <div className="space-y-2.5">
+          {relatedDocs.map((rel) => (
+            <Link
+              key={rel.id}
+              to={`/library/${rel.id}`}
+              className="group flex items-center gap-3 rounded-xl p-2.5 border border-[var(--color-border)] bg-[var(--color-bg)]/55 hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-surface-muted)]/60 transition-colors"
+            >
+              <div className="w-16 shrink-0 overflow-hidden rounded-lg border border-[var(--color-border)]">
+                <HybridMediaCard src={rel.coverImage} alt={rel.coverAlt} aspect="4/3" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold leading-snug line-clamp-2 text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors">
+                  {rel.title}
+                </div>
+                <div className="mt-1 text-[11px] text-[var(--color-text-muted)] truncate">
+                  {rel.category} · {rel.readingMinutes} phút
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* Margin Notes with Create + Edit + Delete + Section Link */}
+      <div className="pt-5 border-t border-[var(--color-border)]">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
+            <NotebookPen className="h-4 w-4 text-[var(--color-primary)]" />
+            <span>Ghi chú bên lề</span>
+          </div>
+          <span className="font-mono-num text-[11px] text-[var(--color-text-muted)]">
+            {docNotes.length}
+          </span>
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!noteInput.trim()) return;
+            addReadingNote(doc.id, noteInput, undefined, activeSectionId, activeSectionTitle);
+            setNoteInput('');
+            showToast('Đã lưu ghi chú bên lề gắn với mục đang đọc.', { variant: 'success' });
+          }}
+          className="space-y-2.5"
+        >
+          {activeSectionTitle && (
+            <p className="text-[11px] text-[var(--color-text-muted)] truncate">
+              Gắn với: <span className="font-medium text-[var(--color-text)]">{activeSectionTitle}</span>
+            </p>
+          )}
+          <textarea
+            ref={noteTextareaRef}
+            rows={3}
+            value={noteInput}
+            onChange={(e) => setNoteInput(e.target.value)}
+            placeholder="Ghi lại ý tưởng, thắc mắc hoặc phản đề vừa nảy ra..."
+            className="textarea-editorial !text-xs resize-none"
+          />
+          <button type="submit" className="btn-secondary w-full !min-h-9 !text-xs">
+            Lưu ghi chú đọc sâu
+          </button>
+        </form>
+
+        {docNotes.length > 0 && (
+          <ul className="mt-3.5 space-y-2.5">
+            {docNotes.map((n) => {
+              const isEditing = editingNoteId === n.id;
+              return (
+                <li
+                  key={n.id}
+                  className="rounded-xl p-3 border border-[var(--color-border)] bg-[var(--color-bg)]/50 text-xs space-y-2"
+                >
+                  {(n.sectionTitle || n.createdAt) && (
+                    <div className="flex items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)]">
+                      <span className="truncate font-medium text-[var(--color-primary)]">
+                        {n.sectionTitle ?? 'Ghi chú chung'}
+                      </span>
+                      <span className="shrink-0 font-mono-num">
+                        {formatNoteTimestamp(n.updatedAt ?? n.createdAt)}
+                      </span>
+                    </div>
+                  )}
+
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <textarea
+                        rows={3}
+                        value={editingNoteValue}
+                        onChange={(e) => setEditingNoteValue(e.target.value)}
+                        className="textarea-editorial !text-xs resize-none"
+                      />
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditingNoteId(null)}
+                          className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editingNoteValue.trim()) {
+                              updateReadingNote(n.id, editingNoteValue);
+                              showToast('Đã cập nhật ghi chú.', { variant: 'success' });
+                            }
+                            setEditingNoteId(null);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-primary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-on-primary)] cursor-pointer"
+                        >
+                          <Check className="h-3 w-3" />
+                          Lưu
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-2.5">
+                      <span className="font-reading text-[0.82rem] leading-relaxed text-[var(--color-text)]">
+                        {n.content}
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingNoteId(n.id);
+                            setEditingNoteValue(n.content);
+                          }}
+                          aria-label="Sửa ghi chú"
+                          className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteReadingNote(n.id)}
+                          aria-label="Xóa ghi chú"
+                          className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* Quick Lab Launch */}
+      <div className="rounded-xl p-4 surface-subtle">
+        <div className="text-xs font-semibold text-[var(--color-text)]">
+          Chuyển mạch sang Thinking Lab
+        </div>
+        <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+          Đính kèm tài liệu này làm ngữ cảnh nền để đào sâu khái niệm hoặc tranh biện.
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              handoffToLab('concept', doc.excerpt, {
+                blockLabel: 'Tóm lược bài đọc',
+                actionIntent: 'analyze_concept',
+              })
+            }
+            className="btn-primary !min-h-9 !px-3 !text-xs"
+          >
+            Concept Lab
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              handoffToLab('debate', doc.excerpt, {
+                blockLabel: 'Tóm lược bài đọc',
+                actionIntent: 'debate_claim',
+              })
+            }
+            className="btn-secondary !min-h-9 !px-3 !text-xs"
+          >
+            Debate Lab
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <WorkspaceShell hideChrome={focusMode}>
+      {/* Hairline Reading Progress Bar */}
+      <div
+        aria-hidden="true"
+        className="fixed top-0 inset-x-0 z-40 h-[2.5px] bg-transparent pointer-events-none"
+      >
+        <div
+          className="h-full transition-[width] duration-150"
+          style={{ width: `${readProgress}%`, backgroundColor: 'var(--color-primary)' }}
+        />
+      </div>
+
+      {/* Admin Draft Preview Banner */}
+      {isAdminPreview && doc.status !== 'published' && (
+        <div className="border-b border-[var(--color-border)] bg-[var(--color-primary-soft)] px-4 py-2 text-center text-xs font-medium text-[var(--color-primary)]">
+          Chế độ xem trước quản trị — Tài liệu này hiện ở trạng thái bản nháp và chưa hiển thị công khai trong Thư viện.
+        </div>
+      )}
+
+      {/* Focus Mode Floating Controls (Font size + Exit) */}
+      {focusMode && (
+        <div className="fixed top-4 right-4 z-40 flex items-center gap-2">
+          <LibraryFontSizeControl compact className="shadow-md" />
+          <button
+            type="button"
+            onClick={() => setFocusMode(false)}
+            className="btn-secondary !min-h-9 !px-3.5 !text-xs shadow-md"
+          >
+            <Minimize2 className="h-3.5 w-3.5" />
+            Thoát Tập trung (Esc / F)
+          </button>
+        </div>
+      )}
+
+      {/* Desktop Text Selection 5-Action Popover (15–600 chars) */}
+      <AnimatePresence>
+        {selectionPopover && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.15 }}
+            style={{
+              left: `${selectionPopover.x}px`,
+              top: `${selectionPopover.y}px`,
+              transform: 'translate(-50%, -100%)',
+              boxShadow: 'var(--shadow-float)',
+            }}
+            className="fixed z-50 w-80 rounded-2xl p-2.5 border border-[var(--color-border-strong)] bg-[var(--color-surface)]"
+          >
+            <div className="flex items-center justify-between px-2 pb-1.5 mb-1 border-b border-[var(--color-border)]">
+              <span className="text-[11px] font-semibold text-[var(--color-primary)]">
+                Khám phá đoạn bôi đen cùng AI
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectionPopover(null)}
+                aria-label="Đóng thanh tác vụ"
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <LibraryToLabActionsMenu
+              compact
+              onSelectAction={(option) =>
+                handleLabActionSelect(option, selectionPopover.text, {
+                  blockLabel: 'Đoạn trích bôi đen',
+                  sectionId: activeSectionId,
+                  sectionTitle: activeSectionTitle,
+                })
+              }
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Top Reading Toolbar */}
+      {!focusMode && (
+        <div className="sticky top-14 lg:top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-bg)]/94 backdrop-blur-md">
+          <div className="mx-auto max-w-[1400px] flex items-center justify-between gap-3 px-4 sm:px-6 h-14">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Link
+                to="/library"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] whitespace-nowrap transition-colors"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Library
+              </Link>
+
+              <nav
+                aria-label="Đường dẫn bài đọc"
+                className="hidden md:flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] min-w-0"
+              >
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                <span className="shrink-0">{doc.category}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                <span className="truncate font-medium text-[var(--color-text)] max-w-[200px] xl:max-w-[280px]">
+                  {doc.title}
+                </span>
+              </nav>
+            </div>
+
+            {/* Right Controls: Font Size · Focus · Share · Save · Notes · Open in Lab */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Font Size Selector (synced via --library-font-scale & localStorage) */}
+              <LibraryFontSizeControl compact className="hidden sm:inline-flex" />
+
+              <button
+                type="button"
+                onClick={() => setFocusMode(true)}
+                title="Đọc tập trung (phím F)"
+                aria-label="Chế độ đọc tập trung"
+                className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const shareUrl = `${window.location.origin}/library/${encodeURIComponent(doc.id)}`;
+                  try {
+                    await navigator.clipboard.writeText(shareUrl);
+                    showToast('Đã sao chép liên kết bài đọc để chia sẻ.', { variant: 'success' });
+                  } catch {
+                    showToast('Không thể sao chép liên kết tự động trên trình duyệt này.', {
+                      variant: 'warning',
+                    });
+                  }
+                }}
+                aria-label="Chia sẻ liên kết tài liệu"
+                title="Chia sẻ liên kết tài liệu"
+                className="btn-secondary !min-h-9 !px-2.5 !py-1.5 !text-xs"
+              >
+                <Share2 className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                <span className="hidden xl:inline">Chia sẻ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  toggleSavedDoc(doc.id);
+                  showToast(
+                    isSaved
+                      ? 'Đã bỏ lưu tài liệu khỏi tủ sách.'
+                      : 'Đã lưu tài liệu vào tủ sách cá nhân.',
+                    { variant: isSaved ? 'info' : 'success' }
+                  );
+                }}
+                className={`btn-secondary !min-h-9 !px-3 !py-1.5 !text-xs ${
+                  isSaved ? '!border-[var(--color-primary)] !text-[var(--color-primary)]' : ''
+                }`}
+              >
+                <Bookmark className={`h-3.5 w-3.5 ${isSaved ? 'fill-current' : ''}`} />
+                <span className="hidden sm:inline">{isSaved ? 'Đã lưu' : 'Lưu'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenNotes}
+                className="btn-secondary !min-h-9 !px-3 !py-1.5 !text-xs"
+              >
+                <NotebookPen className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                <span className="hidden sm:inline">
+                  Ghi chú{docNotes.length > 0 ? ` (${docNotes.length})` : ''}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  handoffToLab('debate', doc.excerpt, {
+                    blockLabel: 'Toàn bài đọc',
+                    actionIntent: 'debate_claim',
+                  })
+                }
+                className="btn-primary !min-h-9 !px-3.5 !py-1.5 !text-xs"
+              >
+                <span className="hidden md:inline">Mở trong Thinking Lab</span>
+                <span className="md:hidden">Mở Lab</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Laptop 1024px–1279px Sticky Right Edge Tab */}
+      {!focusMode && (
+        <button
+          type="button"
+          onClick={() => setSlideOverToolsOpen(true)}
+          aria-label="Mở Thuật ngữ, Tài liệu liên quan và Ghi chú"
+          className="hidden lg:flex xl:hidden fixed right-0 top-1/2 -translate-y-1/2 z-20 flex-col items-center gap-2 rounded-l-xl border border-r-0 border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-4 text-xs font-medium text-[var(--color-text)] hover:text-[var(--color-primary)] shadow-sm transition-colors cursor-pointer"
+        >
+          <NotebookPen className="h-4 w-4 text-[var(--color-primary)]" />
+          <span className="[writing-mode:vertical-rl] rotate-180 tracking-wide">
+            Thuật ngữ & Ghi chú
+          </span>
+        </button>
+      )}
+
+      {/* Mobile / Tablet Quick Triggers for Bottom Sheet (TOC + Tools + Font Size) */}
+      {!focusMode && (
+        <div className="flex lg:hidden items-center justify-center gap-2.5 px-4 pt-4">
+          <button
+            type="button"
+            onClick={() => setMobileSheet('toc')}
+            className="btn-secondary flex-1 !min-h-11 !text-xs"
+          >
+            <List className="h-4 w-4 text-[var(--color-primary)]" />
+            Mục lục
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileSheet('tools')}
+            className="btn-secondary flex-1 !min-h-11 !text-xs"
+          >
+            <NotebookPen className="h-4 w-4 text-[var(--color-primary)]" />
+            Thuật ngữ & Ghi chú ({docNotes.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const idx = READING_FONT_SIZE_OPTIONS.findIndex((o) => o.key === fontSize);
+              const next = READING_FONT_SIZE_OPTIONS[(idx + 1) % READING_FONT_SIZE_OPTIONS.length];
+              updateLayoutPrefs({ readingFontSize: next.key });
+            }}
+            aria-label="Đổi cỡ chữ"
+            className="btn-secondary !min-h-11 !px-3 !text-xs shrink-0"
+          >
+            <Type className="h-4 w-4 text-[var(--color-primary)]" />
+            <span className="font-mono-num font-semibold">
+              {READING_FONT_SIZE_OPTIONS.find((o) => o.key === fontSize)?.shortLabel ?? 'A'}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Scroll Restoration Quiet Toast */}
+      {restoredBanner && (
+        <div className="mx-auto max-w-[740px] px-5 pt-4">
+          <div className="rounded-xl px-4 py-2.5 text-xs text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between gap-2">
+            <span>{restoredBanner}</span>
+            <button
+              type="button"
+              onClick={() => setRestoredBanner(null)}
+              aria-label="Đóng thông báo"
+              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3-Column Adaptive Reading Layout */}
+      <div
+        className={`mx-auto w-full px-5 sm:px-8 py-8 lg:py-10 ${
+          focusMode
+            ? 'max-w-[760px]'
+            : 'max-w-[1400px] grid grid-cols-1 lg:grid-cols-12 gap-8 items-start'
+        }`}
+      >
+        {/* Column 1: Left Table of Contents */}
+        {!focusMode && (
+          <aside
+            aria-label="Mục lục tài liệu"
+            className="hidden lg:block lg:col-span-3 xl:col-span-2 sticky top-20"
+          >
+            <div className="rounded-2xl p-4 surface-card">
+              <div className="font-display text-sm font-semibold text-[var(--color-text)] mb-3">
+                Mục lục
+              </div>
+              <nav className="space-y-1">
+                {doc.sections.map((section) => {
+                  const isActive = activeSectionId === section.id;
+                  return (
+                    <a
+                      key={section.id}
+                      href={`#${section.id}`}
+                      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs leading-snug transition-colors ${
+                        isActive
+                          ? 'bg-[var(--color-bg)] text-[var(--color-primary)] font-semibold border border-[var(--color-border)]'
+                          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg)]/50'
+                      }`}
+                    >
+                      {isActive && <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                      <span>{section.title}</span>
+                    </a>
+                  );
+                })}
+              </nav>
+
+              <div className="mt-5 pt-4 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+                Mẹo đọc sâu: Nhấn vào các thuật ngữ gạch chân chấm để xem định nghĩa, hoặc bôi đen
+                đoạn văn để mở 5 tác vụ Thinking Lab.
+              </div>
+            </div>
+          </aside>
+        )}
+
+        {/* Column 2: Center Reading Canvas */}
+        <article
+          ref={articleRef}
+          onMouseUp={handleArticleMouseUp}
+          className={
+            focusMode
+              ? 'mx-auto w-full max-w-[68ch]'
+              : 'lg:col-span-9 xl:col-span-7 mx-auto w-full max-w-[68ch]'
+          }
+        >
+          {/* Editorial Article Header */}
+          <header className="pb-7 border-b border-[var(--color-border)]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold">
+              <Link
+                to={`/library?category=${encodeURIComponent(doc.category)}`}
+                className="text-[var(--color-primary)] hover:underline"
+              >
+                {doc.category}
+              </Link>
+              <span className="text-[var(--color-text-muted)]" aria-hidden="true">·</span>
+              <span className="text-[var(--color-text-muted)] font-medium">
+                {getDifficultyLabel(doc.difficulty)}
+              </span>
+              {verified && (
+                <>
+                  <span className="text-[var(--color-text-muted)]" aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1 text-[var(--color-gold)]">
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Đã kiểm chứng nguồn
+                  </span>
+                </>
+              )}
+            </div>
+
+            <h1 className="mt-2.5 font-display lib-scale-h1 font-semibold tracking-tight text-[var(--color-text)]">
+              {doc.title}
+            </h1>
+
+            <div className="mt-3.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-[var(--color-text-muted)]">
+              <span className="font-medium text-[var(--color-text)]">{doc.author}</span>
+              <span aria-hidden="true">·</span>
+              <span>{doc.source}</span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono-num">{doc.publishedDate}</span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono-num">{doc.readingMinutes} phút đọc</span>
+            </div>
+
+            <p className="mt-4 font-reading lib-scale-lead text-[var(--color-text-muted)]">
+              {doc.subtitle}
+            </p>
+
+            <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--color-border)]">
+              <HybridMediaCard
+                src={doc.coverImage}
+                alt={doc.coverAlt}
+                title={doc.title}
+                aspect="16/9"
+              />
+            </div>
+          </header>
+
+          {/* Structured Reading Blocks */}
+          <div className="mt-8">{doc.blocks.map((block, idx) => renderBlock(block, idx))}</div>
+
+          {/* Verified References Section */}
+          {doc.references && doc.references.length > 0 && (
+            <section
+              aria-labelledby="references-heading"
+              className="mt-10 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6"
+            >
+              <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--color-border)]">
+                <h2
+                  id="references-heading"
+                  className="font-display text-lg font-semibold text-[var(--color-text)]"
+                >
+                  Nguồn tham khảo & Tác phẩm gốc
+                </h2>
+                {verified && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-gold)]">
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Đã đối chiếu
+                  </span>
+                )}
+              </div>
+              <ol className="mt-4 space-y-3 lib-scale-small font-reading text-[var(--color-text-muted)] list-decimal pl-5">
+                {doc.references.map((ref) => (
+                  <li key={ref.id} className="leading-relaxed">
+                    {ref.author && (
+                      <span className="font-semibold text-[var(--color-text)]">{ref.author}. </span>
+                    )}
+                    <span className="italic text-[var(--color-text)]">{ref.title}</span>
+                    {ref.publisher && <span>. {ref.publisher}</span>}
+                    {ref.publicationYear && <span> ({ref.publicationYear})</span>}.
+                    {ref.url && isSafeHttpUrl(ref.url) && (
+                      <a
+                        href={ref.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-1.5 inline-flex items-center gap-0.5 text-xs font-medium text-[var(--color-primary)] hover:underline"
+                      >
+                        Liên kết <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+
+          <ChapterDividerSvg />
+
+          {/* End-of-article 5-Action Bridge to Thinking Lab */}
+          <section className="rounded-2xl p-6 sm:p-7 surface-card space-y-5">
+            <div>
+              <div className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--color-primary)]">
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
+                <span>Chuyển hóa tri thức thành tư duy</span>
+              </div>
+              <h2 className="mt-1.5 font-display text-xl sm:text-2xl font-semibold text-[var(--color-text)]">
+                Khám phá sâu hơn cùng Thinking Lab
+              </h2>
+              <p className="mt-1.5 text-xs sm:text-sm leading-relaxed text-[var(--color-text-muted)]">
+                Chọn một cách tiếp cận bên dưới — đoạn trích và ngữ cảnh tài liệu sẽ được điền sẵn
+                vào khung soạn thảo để bạn chỉnh sửa trước khi gửi.
+              </p>
+            </div>
+
+            <LibraryToLabActionsMenu
+              onSelectAction={(option) =>
+                handleLabActionSelect(option, doc.excerpt, {
+                  blockLabel: 'Tổng quan bài đọc',
+                  sectionId: activeSectionId,
+                  sectionTitle: activeSectionTitle,
+                })
+              }
+            />
+          </section>
+        </article>
+
+        {/* Column 3: Right Concepts, Related Docs & Margin Notes */}
+        {!focusMode && (
+          <aside
+            aria-label="Thuật ngữ, tài liệu liên quan và ghi chú"
+            className="hidden xl:block xl:col-span-3 sticky top-20 rounded-2xl p-5 surface-card max-h-[calc(100vh-6rem)] overflow-y-auto"
+          >
+            {renderRightSidebarContent()}
+          </aside>
+        )}
+      </div>
+
+      {/* Laptop 1024px–1279px Slide-over Right Drawer */}
+      <AnimatePresence>
+        {slideOverToolsOpen && !focusMode && (
+          <div
+            className="fixed inset-0 z-50 hidden lg:block xl:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Thuật ngữ, tài liệu liên quan và ghi chú"
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSlideOverToolsOpen(false)}
+              className="fixed inset-0 bg-black/35 backdrop-blur-[1px]"
+            />
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              className="fixed inset-y-0 right-0 z-10 w-[360px] bg-[var(--color-surface)] border-l border-[var(--color-border)] p-5 overflow-y-auto"
+              style={{ boxShadow: 'var(--shadow-float)' }}
+            >
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-[var(--color-border)]">
+                <h2 className="font-display text-base font-semibold">Thuật ngữ & Ghi chú</h2>
+                <button
+                  type="button"
+                  onClick={() => setSlideOverToolsOpen(false)}
+                  aria-label="Đóng bảng phụ"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-[var(--color-surface-muted)] cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {renderRightSidebarContent()}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile / Tablet Bottom Sheet for TOC & Tools */}
+      <AnimatePresence>
+        {mobileSheet !== 'none' && (
+          <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileSheet('none')}
+              className="fixed inset-0 bg-black/45"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="fixed inset-x-0 bottom-0 z-10 max-h-[82dvh] overflow-y-auto rounded-t-2xl border-t border-[var(--color-border)] bg-[var(--color-surface)] p-5 safe-pb"
+            >
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-[var(--color-border)]">
+                <h2 className="font-display text-base font-semibold">
+                  {mobileSheet === 'toc' ? 'Mục lục bài đọc' : 'Thuật ngữ, Liên quan & Ghi chú'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setMobileSheet('none')}
+                  aria-label="Đóng bảng phụ"
+                  className="flex h-10 w-10 items-center justify-center rounded-lg cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              {mobileSheet === 'toc' ? (
+                <nav className="space-y-1.5">
+                  {doc.sections.map((section) => (
+                    <a
+                      key={section.id}
+                      href={`#${section.id}`}
+                      onClick={() => setMobileSheet('none')}
+                      className="block rounded-lg px-3 py-3 text-sm font-medium hover:bg-[var(--color-surface-muted)]"
+                    >
+                      {section.title}
+                    </a>
+                  ))}
+                </nav>
+              ) : (
+                renderRightSidebarContent()
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Interactive Concept Tooltip Dialog */}
+      <ConceptPopoverDialog
+        concept={activeConcept}
+        onClose={() => setActiveConcept(null)}
+        onSelectConcept={(concept) => setActiveConcept(concept)}
+        activeDocument={doc}
+        allPublishedDocuments={publishedDocuments}
+      />
+    </WorkspaceShell>
+  );
+}

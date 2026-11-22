@@ -1,0 +1,8 @@
+{
+  "name": "Remix Mạch Ngôn V1",
+  "description": "Nền tảng học tập AI cao cấp giúp phát triển tư duy ngôn ngữ, phân tích khái niệm và tranh biện phản biện.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

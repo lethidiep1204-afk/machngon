@@ -1,0 +1,1215 @@
+# MASTER PROMPT: MẠCH NGÔN V1 — LIBRARY EXPANSION & COMPLETION
+
+## VAI TRÒ
+
+Bạn là Senior Full-stack Developer, UI/UX Designer, Software Architect, Learning Experience Designer và chuyên gia tổ chức học liệu số.
+
+Tôi đã có website **MẠCH NGÔN V1**, được phát triển bằng React, TypeScript và Vite.
+
+Tôi muốn bạn tiếp tục phát triển phần **LIBRARY — THƯ VIỆN TRI THỨC** thành một không gian học thuật có nội dung phong phú, chức năng đầy đủ, thiết kế đẹp và khả năng kết nối trực tiếp với Thinking Lab.
+
+Mục tiêu không phải chỉ tăng số lượng tài liệu, mà phải xây dựng một thư viện thực sự có chiều sâu.
+
+**YÊU CẦU QUAN TRỌNG NHẤT: HÃY TRỰC TIẾP KIỂM TRA VÀ NÂNG CẤP CODEBASE HIỆN TẠI. KHÔNG THIẾT KẾ LẠI TOÀN BỘ WEBSITE.**
+
+---
+
+# PHẦN 1. KIỂM TRA HỆ THỐNG HIỆN TẠI
+
+## 1.1. Các file cần kiểm tra
+
+Dự án hiện đã có những file quan trọng:
+
+- `src/pages/LibraryPage.tsx`
+- `src/pages/DocumentDetailPage.tsx`
+- `src/components/library/DocumentCard.tsx`
+- `src/data/seedDocuments.ts`
+- `src/lib/types.ts`
+- `src/lib/storage.ts`
+- `src/lib/AppContext.tsx`
+- `src/pages/LabPage.tsx`
+- `src/pages/AdminPage.tsx`
+- `src/lib/router.tsx`
+
+Hãy đọc và phân tích các file này trước khi chỉnh sửa.
+
+Không được giả định chúng chưa tồn tại.
+
+## 1.2. Những chức năng cần giữ lại
+
+Library hiện tại đã có:
+
+- Danh sách tài liệu.
+- Tìm kiếm tiếng Việt có dấu và không dấu.
+- Lọc theo danh mục.
+- Phân trang.
+- Card tài liệu.
+- Trang đọc chi tiết.
+- Mục lục.
+- Lưu tài liệu.
+- Ghi chú.
+- Tiến độ đọc.
+- Chế độ đọc tập trung.
+- Chọn đoạn văn.
+- Chuyển nội dung sang Concept Lab hoặc Debate Lab.
+- Quản lý tài liệu trong Admin Panel.
+
+Hãy tái sử dụng, cải thiện và mở rộng những chức năng này.
+
+Không tạo component hoặc hệ thống lưu trữ trùng lặp.
+
+## 1.3. Nguyên tắc thay đổi
+
+1. Không phá vỡ giao diện hiện tại.
+2. Không làm mất dữ liệu người dùng.
+3. Không đổi tên ID tài liệu đã tồn tại nếu không cần thiết.
+4. Không thay đổi định dạng dữ liệu mà thiếu cơ chế tương thích.
+5. Không xóa chức năng Library → Thinking Lab.
+6. Không thay đổi hệ thống theme.
+7. Không xóa hoặc làm hỏng Admin Panel.
+8. Không tạo dữ liệu học thuật giả để lấp đầy giao diện.
+9. Không yêu cầu viết lại dự án bằng framework khác.
+10. Không tạo một Library thứ hai.
+
+---
+
+# PHẦN 2. TẦM NHÌN THƯ VIỆN TRI THỨC
+
+## 2.1. Định vị
+
+Library là một môi trường học tập giúp người dùng:
+
+**ĐỌC → HIỂU → PHÂN TÍCH → LIÊN HỆ → ĐẶT CÂU HỎI → TƯ DUY PHẢN BIỆN.**
+
+Tài liệu phải thúc đẩy suy nghĩ, thay vì chỉ cung cấp thông tin.
+
+Library cần kết nối với Thinking Lab để người đọc thực hành trực tiếp trên kiến thức vừa tiếp nhận.
+
+## 2.2. Mục tiêu phát triển
+
+Cần đạt được:
+
+- Thư viện có cấu trúc học thuật rõ ràng.
+- Nội dung được tuyển chọn, biên tập và kiểm chứng.
+- Có nhiều chủ đề để khám phá.
+- Có tính liên ngành.
+- Dễ tìm kiếm.
+- Dễ đọc.
+- Có thể lưu và đọc tiếp.
+- Có câu hỏi gợi suy nghĩ.
+- Có thuật ngữ liên quan.
+- Có tài liệu liên kết.
+- Có thể chuyển từ Library sang AI để phân tích và tranh biện.
+- Hoạt động tốt trên desktop, tablet và mobile.
+
+## 2.3. Mức độ phong phú mong muốn
+
+Hãy mở rộng Library theo hướng có thể quản lý hàng trăm tài liệu trong tương lai.
+
+Đối với đợt nâng cấp hiện tại:
+
+- Đặt mục tiêu xây dựng danh mục 40–60 chủ đề học liệu có cấu trúc.
+- Biên tập ưu tiên khoảng 20–30 tài liệu chất lượng cao có nội dung đầy đủ và nguồn đã kiểm tra.
+- Phát triển trước khoảng 10–15 khái niệm trọng tâm có liên kết với tài liệu.
+- Xây dựng hệ thống câu hỏi gợi suy nghĩ gắn với các tài liệu đã biên tập.
+
+Đây là mục tiêu nội dung, không phải chỉ tiêu bắt buộc phải đạt bằng mọi giá.
+
+Nếu không thể xác minh đủ nguồn, hãy xuất bản số lượng ít hơn và giữ các chủ đề còn lại trong danh sách biên tập hoặc trạng thái bản nháp.
+
+**Không tạo nội dung sơ sài, trùng lặp, bịa đặt tài liệu tham khảo hoặc lặp lại một đoạn văn dưới nhiều tiêu đề để đạt số lượng.**
+
+---
+
+# PHẦN 3. THIẾT KẾ TRANG LIBRARY MỚI
+
+## 3.1. Bố cục chung
+
+Giữ phong cách học thuật cổ điển của MẠCH NGÔN.
+
+Sử dụng logo và các CSS theme hiện có.
+
+Bố cục desktop:
+
+- Navbar trên cùng.
+- Sidebar điều hướng.
+- Hero Library.
+- Thanh tìm kiếm nổi bật.
+- Danh mục tri thức.
+- Khu vực tài liệu nổi bật.
+- Tiếp tục đọc.
+- Khám phá theo chủ đề.
+- Bộ sưu tập học thuật.
+- Danh sách tất cả tài liệu.
+- Khu vực giới thiệu Thinking Lab.
+
+Các khối có khoảng cách rõ ràng, không xếp chồng vô tổ chức.
+
+## 3.2. Hero Library
+
+Thiết kế hero với nội dung:
+
+**THƯ VIỆN TRI THỨC**
+
+"Khám phá những ý tưởng lớn, mở rộng hiểu biết và nuôi dưỡng tư duy độc lập."
+
+Phần hình ảnh có thể dùng:
+
+- Thư viện cổ kính.
+- Những cuốn sách đang mở.
+- Kiến trúc học thuật.
+- Ánh sáng ấm.
+- Hoa văn tinh tế.
+
+Không sử dụng quá nhiều animation.
+
+Giữ typography và màu sắc đồng nhất với trang chủ.
+
+## 3.3. Thanh tìm kiếm trung tâm
+
+Tạo thanh tìm kiếm lớn, dễ nhìn.
+
+Placeholder:
+
+"Bạn muốn khám phá điều gì hôm nay?"
+
+Bên dưới hiển thị các từ khóa phổ biến được cấu hình từ nội dung thực tế:
+
+- Tự do.
+- Hạnh phúc.
+- Ngôn ngữ.
+- Tư duy phản biện.
+- Lập luận.
+- Văn học.
+- Triết học.
+
+Khi nhấn vào từ khóa, tự động thực hiện tìm kiếm.
+
+Hỗ trợ:
+
+- Tiếng Việt có dấu.
+- Tiếng Việt không dấu.
+- Tìm theo nhan đề.
+- Tìm theo tác giả.
+- Tìm theo thuật ngữ.
+- Tìm theo từ khóa.
+- Tìm theo nội dung tài liệu.
+
+Thêm gợi ý khi người dùng nhập từ khóa, nếu có dữ liệu phù hợp.
+
+Không tạo gợi ý không dẫn đến kết quả.
+
+## 3.4. Tài liệu nổi bật
+
+Tạo section:
+
+**TÀI LIỆU NỔI BẬT**
+
+Hiển thị 3–6 tài liệu.
+
+Mỗi card gồm:
+
+- Ảnh bìa.
+- Danh mục.
+- Tiêu đề.
+- Mô tả 2–3 dòng.
+- Tác giả hoặc đơn vị biên soạn.
+- Thời lượng đọc.
+- Nút "Khám phá".
+- Nút lưu.
+
+Ảnh bìa phải phù hợp với nội dung.
+
+Không dùng một ảnh giống nhau cho nhiều tài liệu nếu có thể tránh.
+
+Thẻ được chọn làm nổi bật phải dựa trên cấu hình biên tập hoặc số liệu sử dụng thật, không tự gắn nhãn "phổ biến nhất" khi chưa có dữ liệu.
+
+## 3.5. Tiếp tục hành trình tri thức
+
+Tạo section:
+
+**TIẾP TỤC KHÁM PHÁ**
+
+Hiển thị tài liệu người dùng đang đọc dở.
+
+Card gồm:
+
+- Tên tài liệu.
+- Ảnh bìa nhỏ.
+- Tiến độ đã cuộn qua.
+- Nút "Đọc tiếp".
+
+Lấy dữ liệu từ chức năng lưu tiến độ hiện tại.
+
+Nếu người dùng chưa đọc tài liệu nào, ẩn section hoặc hiển thị lời gợi ý hợp lý.
+
+Không tạo tiến độ đọc giả.
+
+## 3.6. Khám phá theo lĩnh vực
+
+Thiết kế các card danh mục có hình minh họa hoặc icon riêng.
+
+Mỗi card gồm:
+
+- Tên lĩnh vực.
+- Mô tả một câu.
+- Số tài liệu thực tế.
+- Nút khám phá.
+
+Card có hover tinh tế, không phóng to quá mức.
+
+## 3.7. Bộ sưu tập học thuật
+
+Bổ sung khu vực:
+
+**HÀNH TRÌNH TRI THỨC**
+
+Đây là tập hợp các tài liệu liên quan theo một chủ đề.
+
+Ví dụ:
+
+Bộ sưu tập 1: Con người và sự tự do.
+
+Bộ sưu tập 2: Ngôn ngữ và tư duy.
+
+Bộ sưu tập 3: Nghệ thuật lập luận.
+
+Bộ sưu tập 4: Những câu hỏi lớn của triết học.
+
+Bộ sưu tập 5: Văn học và cách nhìn thế giới.
+
+Mỗi bộ sưu tập cần có:
+
+- Tiêu đề.
+- Mô tả.
+- Ảnh đại diện.
+- Danh sách tài liệu liên quan.
+- Thứ tự đọc được đề xuất.
+
+Chỉ xuất bản bộ sưu tập khi có ít nhất một số tài liệu thực tế liên quan và được kiểm duyệt.
+
+Không tạo card dẫn đến trang rỗng.
+
+---
+
+# PHẦN 4. MỞ RỘNG HỆ THỐNG PHÂN LOẠI
+
+## 4.1. Nhóm Ngôn ngữ học
+
+Chủ đề gợi ý:
+
+1. Ngôn ngữ là gì?
+2. Ngôn ngữ và tư duy.
+3. Ngôn ngữ và nhận thức.
+4. Ngôn ngữ trong giao tiếp.
+5. Sức mạnh của từ ngữ.
+6. Nghĩa của từ và ngữ cảnh.
+7. Ngôn ngữ biểu tượng.
+8. Sự khác biệt giữa ngôn ngữ nói và viết.
+9. Ngôn ngữ và bản sắc văn hóa.
+10. Nghệ thuật diễn đạt rõ ràng.
+
+## 4.2. Nhóm Văn học và lý luận văn học
+
+Chủ đề gợi ý:
+
+1. Văn học là gì?
+2. Văn học và đời sống.
+3. Hình tượng nghệ thuật.
+4. Nhân vật văn học.
+5. Điểm nhìn trần thuật.
+6. Chủ đề và tư tưởng tác phẩm.
+7. Biểu tượng trong văn học.
+8. Nghệ thuật kể chuyện.
+9. Ngôn ngữ nghệ thuật.
+10. Văn học và trải nghiệm con người.
+
+## 4.3. Nhóm Triết học và tư tưởng
+
+Chủ đề gợi ý:
+
+1. Triết học bắt đầu từ đâu?
+2. Con người và sự tự do.
+3. Hạnh phúc là gì?
+4. Sự thật và nhận thức.
+5. Đạo đức và trách nhiệm.
+6. Công bằng là gì?
+7. Ý nghĩa cuộc sống.
+8. Tri thức và niềm tin.
+9. Cá nhân và xã hội.
+10. Tư duy độc lập.
+
+## 4.4. Nhóm Logic và lập luận
+
+Chủ đề gợi ý:
+
+1. Luận điểm là gì?
+2. Luận cứ và bằng chứng.
+3. Lập luận diễn dịch.
+4. Lập luận quy nạp.
+5. Phân biệt sự kiện và ý kiến.
+6. Ngụy biện công kích cá nhân.
+7. Ngụy biện khái quát vội vàng.
+8. Mối quan hệ nhân quả.
+9. Phản ví dụ.
+10. Cách xây dựng lập luận thuyết phục.
+
+## 4.5. Nhóm Tư duy phản biện
+
+Chủ đề gợi ý:
+
+1. Tư duy phản biện là gì?
+2. Nghệ thuật đặt câu hỏi.
+3. Đánh giá nguồn thông tin.
+4. Kiểm tra bằng chứng.
+5. Nhận diện giả định.
+6. Xem xét quan điểm đối lập.
+7. Thiên kiến nhận thức.
+8. Tư duy đa chiều.
+9. Phân tích vấn đề phức tạp.
+10. Tự điều chỉnh quan điểm.
+
+## 4.6. Nhóm Kiến thức liên ngành
+
+Chủ đề gợi ý:
+
+1. Văn học và triết học.
+2. Ngôn ngữ và tâm lý học.
+3. Khoa học và tư duy logic.
+4. Lịch sử các ý tưởng.
+5. Văn hóa và thế giới quan.
+6. Truyền thông và nhận thức.
+7. Công nghệ và tư duy độc lập.
+8. AI và trách nhiệm học tập.
+9. Nghệ thuật và cảm xúc.
+10. Đạo đức trong đời sống hiện đại.
+
+## 4.7. Quy tắc triển khai danh mục
+
+Danh sách trên là định hướng biên tập, không phải 60 tài liệu đã được xác minh.
+
+Hãy:
+
+- Chuẩn hóa danh mục hiện có.
+- Giữ các ID và tài liệu cũ.
+- Hợp nhất các danh mục trùng nghĩa.
+- Tách "Logic và lập luận" và "Tư duy phản biện" thành các nhóm rõ ràng nếu dữ liệu đủ.
+- Cho phép tài liệu có thẻ liên ngành.
+- Không sao chép cùng một tài liệu thành nhiều bản.
+- Hiển thị số lượng tài liệu thật trong từng danh mục.
+- Không xuất hiện danh mục rỗng ở phần khám phá nổi bật, trừ khi đánh dấu rõ "Sắp ra mắt".
+
+---
+
+# PHẦN 5. NÂNG CẤP CẤU TRÚC TÀI LIỆU
+
+## 5.1. Yêu cầu chung
+
+Hiện tại `LibraryDocument` đã có những trường như:
+
+- id
+- title
+- subtitle
+- author
+- source
+- publishedDate
+- readingMinutes
+- category
+- coverImage
+- coverAlt
+- excerpt
+- keywords
+- sections
+- blocks
+- status
+
+Hãy mở rộng kiểu dữ liệu một cách tương thích ngược.
+
+Không xóa các trường cũ.
+
+Có thể bổ sung:
+
+```ts
+interface LibraryDocumentExtension {
+  difficulty?: "intro" | "explore" | "advanced";
+
+  tags?: string[];
+
+  featured?: boolean;
+
+  collectionIds?: string[];
+
+  references?: ArticleReference[];
+
+  relatedConceptIds?: string[];
+
+  reviewedAt?: string;
+
+  verified?: boolean;
+
+  contentVersion?: number;
+}
+
+interface ArticleReference {
+  id: string;
+  title: string;
+  author?: string;
+  publisher?: string;
+  publicationYear?: number;
+  url?: string;
+  note?: string;
+  verified: boolean;
+}
+```
+
+Đây là các phần mở rộng đề xuất.
+
+Hãy lựa chọn cách tích hợp phù hợp với hệ thống đang có.
+
+## 5.2. Mẫu tài liệu học thuật
+
+Một tài liệu hoàn chỉnh nên có:
+
+### A. Thông tin đầu bài
+
+- Tiêu đề.
+- Phụ đề.
+- Tác giả hoặc người biên soạn.
+- Danh mục.
+- Thời gian đọc.
+- Mô tả.
+- Nguồn.
+
+### B. Dẫn nhập
+
+Đặt vấn đề và giải thích tại sao chủ đề đáng tìm hiểu.
+
+### C. Kiến thức nền tảng
+
+Giải thích khái niệm và bối cảnh.
+
+### D. Phân tích chuyên sâu
+
+Làm rõ các khía cạnh, quan điểm và mối liên hệ.
+
+### E. Ví dụ minh họa
+
+Ví dụ cụ thể, dễ hiểu, phù hợp với học sinh.
+
+### F. Góc nhìn khác
+
+Đưa ra cách tiếp cận khác hoặc phản đề có căn cứ.
+
+### G. Thuật ngữ trọng tâm
+
+Giải thích các thuật ngữ liên quan.
+
+### H. Câu hỏi gợi suy nghĩ
+
+Tạo 3–5 câu hỏi chất lượng, phù hợp với nội dung.
+
+### I. Tổng kết
+
+Tóm tắt những kiến thức chính.
+
+### J. Khám phá tiếp
+
+Liên kết đến:
+
+- Tài liệu liên quan.
+- Concept Lab.
+- Debate Lab.
+
+### K. Nguồn tham khảo
+
+Cung cấp tài liệu tham khảo có thể kiểm chứng.
+
+Không bắt buộc mọi bài viết phải có cấu trúc giống nhau hoàn toàn. Tùy lĩnh vực, có thể điều chỉnh để nội dung tự nhiên và đúng chuyên môn.
+
+## 5.3. Chất lượng nội dung
+
+Yêu cầu nội dung:
+
+- Viết bằng tiếng Việt chuẩn.
+- Rõ ràng.
+- Có chiều sâu.
+- Không quá hàn lâm.
+- Không đơn giản hóa đến mức sai bản chất.
+- Giải thích thuật ngữ khó.
+- Có ví dụ.
+- Có các góc nhìn khác nhau khi phù hợp.
+- Không lặp ý để kéo dài bài.
+- Không biến nội dung thành lời khuyên sáo rỗng.
+- Không khẳng định vấn đề còn tranh luận là chân lý tuyệt đối.
+
+Ưu tiên tài liệu có thể đọc trong khoảng 5–12 phút, nhưng không cắt ngắn kiến thức quan trọng chỉ để đạt thời lượng.
+
+Thời gian đọc phải được ước tính từ nội dung thật, không gán ngẫu nhiên.
+
+## 5.4. Kiểm tra những tài liệu đã có
+
+Kiểm tra toàn bộ `SEED_DOCUMENTS` hiện tại.
+
+Đặc biệt rà soát:
+
+- Tên tác giả.
+- Nguồn xuất bản.
+- Năm xuất bản.
+- Trích dẫn.
+- Nội dung học thuật.
+- Nguồn gốc hình ảnh.
+
+Không mặc định rằng những nguồn được ghi trong dữ liệu mẫu là có thật hoặc đã được kiểm chứng.
+
+Nếu chưa xác minh được một nguồn, hãy đánh dấu rõ trạng thái và không tự khẳng định tài liệu đã được kiểm duyệt.
+
+Không tự thay nguồn bằng một nguồn khác chỉ vì tên có vẻ tương tự.
+
+---
+
+# PHẦN 6. LÀM GIÀU TRẢI NGHIỆM ĐỌC
+
+## 6.1. Giữ và nâng cấp DocumentDetailPage
+
+Trang đọc hiện tại đã khá nhiều chức năng.
+
+Hãy tối ưu những phần đã có trước khi thêm chức năng mới.
+
+Mục tiêu là tạo cảm giác như đang đọc một cuốn sách học thuật hiện đại.
+
+## 6.2. Bố cục trang đọc
+
+Desktop:
+
+- Trái: Mục lục.
+- Giữa: Nội dung.
+- Phải: Thuật ngữ và tài liệu liên quan.
+
+Mobile:
+
+- Nội dung chiếm phần lớn màn hình.
+- Mục lục thu gọn.
+- Các công cụ đọc nằm trong menu dễ truy cập.
+
+Không để sidebar quá rộng làm cột nội dung bị hẹp.
+
+## 6.3. Công cụ đọc
+
+Hoàn thiện:
+
+- Thay đổi cỡ chữ.
+- Chế độ đọc tập trung.
+- Lưu tài liệu.
+- Ghi chú.
+- Hiển thị tiến độ đọc.
+- Quay lại vị trí trước đó.
+- Sao chép liên kết.
+- Xem tài liệu liên quan.
+
+Đảm bảo trạng thái của từng công cụ được lưu phù hợp và không gây lỗi.
+
+## 6.4. Thuật ngữ tương tác
+
+Tạo component:
+
+`ConceptTooltip`
+
+Khi người dùng nhấn vào thuật ngữ:
+
+- Hiển thị giải thích ngắn.
+- Hiển thị ví dụ nếu có.
+- Hiển thị thuật ngữ liên quan.
+- Có nút "Phân tích sâu hơn".
+
+Khi nhấn, chuyển đến Concept Lab với thuật ngữ tương ứng.
+
+Không hiển thị tooltip gây che khuất phần lớn nội dung trên điện thoại.
+
+## 6.5. Khung kiến thức trọng tâm
+
+Sử dụng các loại block hiện có:
+
+- prose
+- concept
+- quote
+- counterargument
+- question
+
+Phát triển cách hiển thị trực quan cho từng block.
+
+**Concept block**
+
+Nền sáng nhẹ, biểu tượng tri thức.
+
+**Quote block**
+
+Trích dẫn có tác giả và nguồn.
+
+**Counterargument block**
+
+Nhấn mạnh góc nhìn đối lập.
+
+**Question block**
+
+Câu hỏi gợi suy nghĩ với nút mở Thinking Lab.
+
+Không làm tất cả các loại block có màu sắc quá nổi bật khiến trang đọc rối mắt.
+
+## 6.6. Ghi chú cá nhân
+
+Hoàn thiện hệ thống ghi chú hiện có.
+
+Mỗi ghi chú nên liên kết với:
+
+- Tài liệu.
+- Đoạn hoặc mục nội dung.
+- Thời gian tạo.
+
+Cho phép:
+
+- Tạo.
+- Sửa.
+- Xóa.
+- Xem lại.
+
+Không tự động công khai ghi chú cho người khác.
+
+Nếu có thay đổi cấu trúc lưu trữ, phải bảo toàn ghi chú cũ.
+
+---
+
+# PHẦN 7. KẾT NỐI LIBRARY VỚI THINKING LAB
+
+## 7.1. Giữ nguyên cơ chế hiện tại
+
+Dự án đã có:
+
+- `LabHandoffPayload`
+- `setLabHandoff`
+- `consumeLabHandoff`
+- Điều hướng `/lab?mode=...&resource=...`
+
+Hãy kiểm tra và tái sử dụng các cơ chế này.
+
+Không tạo một hệ thống handoff khác chạy song song.
+
+## 7.2. Bổ sung lựa chọn phân tích
+
+Khi người dùng chọn đoạn văn, hiển thị:
+
+**Khám phá với AI**
+
+Các hành động:
+
+1. Giải thích đoạn này.
+2. Phân tích khái niệm.
+3. Tìm ví dụ và phản ví dụ.
+4. Đặt câu hỏi gợi suy nghĩ.
+5. Tranh biện về nhận định.
+
+Các hành động 1–4 có thể sử dụng Concept Lab với mục tiêu khác nhau.
+
+Hành động 5 sử dụng Debate Lab.
+
+Không tạo thêm nhiều Lab mới trong V1.
+
+## 7.3. Chuyển ngữ cảnh chính xác
+
+Khi người dùng chuyển từ Library sang Thinking Lab:
+
+- Giữ ID tài liệu.
+- Giữ tiêu đề.
+- Giữ đoạn được chọn nếu có.
+- Giữ mục đang đọc.
+- Ghi nhận nguồn.
+- Chuyển chế độ phù hợp.
+- Không tự gửi lời nhắn khi chưa được người dùng xác nhận.
+
+Backend phải xác minh tài liệu và ngữ cảnh.
+
+Không tin tưởng tuyệt đối nội dung được gửi từ frontend.
+
+## 7.4. Hiển thị tài liệu nguồn trong Thinking Lab
+
+Trong phiên AI cần có:
+
+"Đang khám phá từ Library: [Tên tài liệu]"
+
+Có nút:
+
+"Quay lại tài liệu".
+
+Khi quay lại, khôi phục vị trí đọc nếu có.
+
+## 7.5. Liên kết ngược
+
+Khi kết thúc phiên Thinking Lab, có thể đề xuất:
+
+- Đọc thêm tài liệu liên quan.
+- Quay lại nội dung gốc.
+- Khám phá khái niệm khác.
+
+Các gợi ý phải dựa trên tài liệu thật đang có trong Library.
+
+Không tạo liên kết đến nội dung chưa tồn tại.
+
+---
+
+# PHẦN 8. HỆ THỐNG GỢI Ý TÀI LIỆU
+
+## 8.1. Gợi ý theo nội dung
+
+Xây dựng hệ thống gợi ý đơn giản, minh bạch và có thể kiểm tra.
+
+Ưu tiên dựa vào:
+
+- Danh mục.
+- Thẻ chủ đề.
+- Khái niệm liên quan.
+- Bộ sưu tập.
+
+Ví dụ:
+
+Người đọc tài liệu về tự do có thể được gợi ý:
+
+- Trách nhiệm cá nhân.
+- Đạo đức học.
+- Cá nhân và xã hội.
+
+Chỉ hiển thị khi tài liệu tương ứng thực sự tồn tại và đã xuất bản.
+
+## 8.2. Gợi ý theo hoạt động gần đây
+
+Có thể hiển thị các tài liệu liên quan đến lịch sử đọc hoặc sở thích người dùng, nếu người dùng đồng ý.
+
+Không suy đoán sức khỏe tâm thần, trí thông minh, tính cách hoặc năng lực cố định của học sinh từ hành vi đọc.
+
+## 8.3. Gợi ý trong Dashboard
+
+Tạo section nhỏ:
+
+"Có thể bạn muốn khám phá"
+
+Hiển thị tối đa 3 tài liệu liên quan.
+
+Không tạo hệ thống gợi ý thứ hai độc lập với Library.
+
+---
+
+# PHẦN 9. PHÁT TRIỂN ADMIN LIBRARY
+
+## 9.1. Kiểm tra công cụ hiện tại
+
+Admin Panel đã có chức năng thêm, chỉnh sửa và quản lý tài liệu.
+
+Hãy giữ lại và phát triển thêm thay vì tạo trang quản trị mới.
+
+## 9.2. Trình biên tập học liệu
+
+Bổ sung giao diện giúp người quản trị:
+
+- Tạo tiêu đề.
+- Nhập mô tả.
+- Chọn danh mục.
+- Nhập nội dung.
+- Thêm heading.
+- Thêm thuật ngữ.
+- Chèn ví dụ.
+- Tạo câu hỏi.
+- Thêm trích dẫn.
+- Gắn nguồn.
+- Chọn ảnh bìa.
+- Xem trước.
+- Lưu bản nháp.
+- Xuất bản.
+
+Hạn chế việc người quản trị phải chỉnh sửa trực tiếp code TypeScript để thêm tài liệu.
+
+## 9.3. Quản lý danh mục
+
+Cho phép:
+
+- Thêm danh mục.
+- Sửa tên.
+- Sửa mô tả.
+- Ẩn danh mục.
+- Sắp xếp thứ tự.
+- Xem số tài liệu.
+
+Không xóa danh mục đang được sử dụng mà không xử lý các tài liệu liên quan.
+
+## 9.4. Quản lý bộ sưu tập
+
+Cho phép tạo bộ sưu tập theo chủ đề.
+
+Ví dụ:
+
+"Tư duy phản biện từ cơ bản đến nâng cao".
+
+Admin có thể:
+
+- Chọn tài liệu.
+- Sắp xếp thứ tự.
+- Nhập mô tả.
+- Chọn ảnh.
+- Xuất bản hoặc lưu nháp.
+
+## 9.5. Quản lý kiểm chứng
+
+Bổ sung trạng thái:
+
+- Chờ biên tập.
+- Chờ kiểm tra nguồn.
+- Đã kiểm duyệt.
+- Đã xuất bản.
+- Đã lưu trữ.
+
+Chỉ hiển thị nhãn "Đã kiểm chứng" khi thực sự có quy trình xác minh nguồn hoàn tất.
+
+Không để một boolean mặc định `true` được xem là bằng chứng kiểm chứng.
+
+## 9.6. Bảo mật quản trị
+
+Kiểm tra quyền ở backend.
+
+Không cho phép người dùng thông thường thực hiện API quản trị chỉ bằng cách biết URL.
+
+Bảo vệ dữ liệu nhập.
+
+Kiểm tra và làm sạch nội dung trước khi hiển thị.
+
+---
+
+# PHẦN 10. QUẢN LÝ HỌC LIỆU VÀ HÌNH ẢNH
+
+## 10.1. Ảnh bìa tài liệu
+
+Mỗi tài liệu nên có ảnh bìa phù hợp.
+
+Phong cách:
+
+- Academic illustration.
+- Vintage editorial.
+- Classical architecture.
+- Watercolor.
+- Light academia.
+- Mystic academia.
+
+Màu sắc phù hợp hai theme hiện có.
+
+Tránh:
+
+- Ảnh ngẫu nhiên không liên quan.
+- Watermark.
+- Chữ sai trong ảnh AI.
+- Ảnh vi phạm bản quyền.
+- Ảnh quá nặng.
+- Nhiều tài liệu dùng cùng ảnh khi không cần thiết.
+
+## 10.2. Quản lý asset
+
+Kiểm tra cách dự án hiện import ảnh từ `src/assets`.
+
+Lưu ý file ảnh không nên chỉ được tham chiếu bằng đường dẫn `/src/assets/...` nếu đường dẫn đó không hoạt động ổn định trong bản build production.
+
+Ưu tiên:
+
+- Import asset đúng theo cơ chế Vite.
+- Hoặc chuyển các file cần truy cập trực tiếp sang `public/assets/`.
+- Có ảnh fallback.
+- Có alt text.
+- Tối ưu kích thước.
+- Lazy loading khi phù hợp.
+
+Kiểm thử đường dẫn ảnh trong bản build production, không chỉ development.
+
+---
+
+# PHẦN 11. KIẾN TRÚC CODE VÀ LƯU TRỮ
+
+## 11.1. Không thay đổi framework
+
+Tiếp tục sử dụng:
+
+- React.
+- TypeScript.
+- Vite.
+- Hệ thống styling đang có.
+- Router hiện tại.
+- AppContext hiện tại khi phù hợp.
+
+Không thêm framework lớn khác.
+
+## 11.2. Tách dữ liệu Library
+
+Không tiếp tục dồn mọi học liệu, danh mục và bộ sưu tập vào một file quá lớn.
+
+Có thể tổ chức thành:
+
+```text
+src/
+  data/
+    library/
+      categories.ts
+      collections.ts
+      documents/
+      concepts.ts
+
+  components/
+    library/
+      LibraryHero.tsx
+      LibrarySearch.tsx
+      CategoryGrid.tsx
+      DocumentCard.tsx
+      FeaturedDocuments.tsx
+      CollectionCard.tsx
+      ContinueReading.tsx
+      ConceptTooltip.tsx
+      LibraryToLabActions.tsx
+
+  pages/
+    LibraryPage.tsx
+    DocumentDetailPage.tsx
+
+  lib/
+    library/
+      search.ts
+      recommendations.ts
+      validation.ts
+      contentRepository.ts
+```
+
+Đây chỉ là cấu trúc gợi ý.
+
+Nếu dự án đã có những component tương đương, hãy tái sử dụng.
+
+## 11.3. Dữ liệu người dùng
+
+Hiện dự án sử dụng localStorage và sessionStorage cho nhiều trạng thái.
+
+Trong V1, có thể tiếp tục duy trì cơ chế này để giữ tương thích với bản mẫu.
+
+Tuy nhiên:
+
+- Không xem localStorage là cơ chế đồng bộ đa thiết bị.
+- Không coi dữ liệu cục bộ là dữ liệu tài khoản an toàn.
+- Không lưu khóa API.
+- Không lưu nội dung nhạy cảm không cần thiết.
+- Không thay đổi khóa lưu trữ cũ khi chưa có migration.
+
+Nếu có backend phù hợp, có thể phát triển đồng bộ dữ liệu cho tài khoản, nhưng phải bảo đảm người dùng cũ không mất dữ liệu.
+
+## 11.4. Hiệu năng
+
+Tối ưu:
+
+- Lazy loading.
+- Phân trang.
+- Memoization hợp lý.
+- Tìm kiếm debounce.
+- Ảnh tối ưu.
+- Không tải toàn bộ nội dung hàng trăm tài liệu vào bộ nhớ trình duyệt nếu không cần.
+
+Với bộ dữ liệu nhỏ có thể dùng tìm kiếm cục bộ.
+
+Khi dữ liệu tăng lớn, thiết kế khả năng chuyển sang tìm kiếm phía server.
+
+---
+
+# PHẦN 12. NHỮNG TRẠNG THÁI GIAO DIỆN BẮT BUỘC
+
+Hoàn thiện:
+
+1. Loading.
+2. Empty state.
+3. Search no results.
+4. Error state.
+5. Document not found.
+6. Draft not accessible.
+7. Reading progress restored.
+8. Bookmark saved.
+9. Bookmark removed.
+10. Lab handoff success.
+11. Lab handoff failure.
+12. Network unavailable.
+
+Mọi thông báo phải rõ ràng bằng tiếng Việt.
+
+Không hiển thị trang trắng khi thiếu dữ liệu.
+
+Không tự chuyển người dùng sang tài liệu đầu tiên nếu ID tài liệu được yêu cầu không tồn tại. Thay vào đó, hiển thị trang "Không tìm thấy tài liệu" với đường dẫn trở lại Library.
+
+---
+
+# PHẦN 13. RESPONSIVE VÀ ACCESSIBILITY
+
+Kiểm tra tối thiểu các độ rộng:
+
+- 375px.
+- 430px.
+- 768px.
+- 1024px.
+- 1440px.
+
+Yêu cầu:
+
+- Không cuộn ngang ngoài ý muốn.
+- Menu dễ dùng.
+- Chữ dễ đọc.
+- Card không bị cắt.
+- Tooltip hoạt động với cảm ứng.
+- Chọn đoạn văn có giải pháp phù hợp trên mobile.
+- Sidebar thu gọn hợp lý.
+- Tương phản đủ.
+- Có focus state.
+- Có nhãn cho các nút icon.
+- Có thao tác bàn phím.
+- Không phụ thuộc hoàn toàn vào hover.
+
+---
+
+# PHẦN 14. KIỂM THỬ
+
+Kiểm thử các tình huống:
+
+### Test A — Tìm kiếm
+
+Tìm tài liệu bằng tiếng Việt có dấu và không dấu.
+
+### Test B — Danh mục
+
+Chọn từng danh mục và kiểm tra dữ liệu.
+
+### Test C — Tài liệu
+
+Mở tài liệu, sử dụng mục lục, đọc nội dung.
+
+### Test D — Tiến độ
+
+Đọc giữa chừng, rời trang và quay lại.
+
+### Test E — Ghi chú
+
+Thêm, sửa, xóa ghi chú.
+
+### Test F — Concept Lab
+
+Chọn một khái niệm trong tài liệu và mở Concept Lab.
+
+### Test G — Debate Lab
+
+Chọn câu hỏi phản biện và mở Debate Lab.
+
+### Test H — Admin
+
+Thêm, sửa, lưu nháp và xuất bản tài liệu.
+
+### Test I — Nguồn
+
+Kiểm tra thông tin trích dẫn và nguồn.
+
+### Test J — Mobile
+
+Kiểm tra toàn bộ hành trình đọc và chuyển Lab trên điện thoại.
+
+### Test K — Build
+
+Chạy các lệnh kiểm tra phù hợp với dự án, bao gồm:
+
+```bash
+npm run lint
+npm run build
+```
+
+Nếu phát sinh lỗi, xác định nguyên nhân và sửa những lỗi thuộc phạm vi thay đổi.
+
+Không tuyên bố test thành công nếu chưa thực sự chạy.
+
+---
+
+# PHẦN 15. THỨ TỰ TRIỂN KHAI
+
+Ưu tiên thực hiện theo thứ tự:
+
+**BƯỚC 1:** Kiểm tra codebase và sửa lỗi Library hiện có.
+
+**BƯỚC 2:** Chuẩn hóa danh mục, dữ liệu và cấu trúc học liệu.
+
+**BƯỚC 3:** Nâng cấp giao diện Library với các khu vực khám phá nội dung.
+
+**BƯỚC 4:** Xây dựng bộ sưu tập và nội dung chất lượng có nguồn.
+
+**BƯỚC 5:** Hoàn thiện trang đọc, thuật ngữ và câu hỏi.
+
+**BƯỚC 6:** Hoàn thiện liên kết Library → Thinking Lab.
+
+**BƯỚC 7:** Mở rộng Admin để quản lý học liệu thuận tiện.
+
+**BƯỚC 8:** Kiểm thử, tối ưu và rà soát nội dung.
+
+Nếu một bước quá lớn, chia nhỏ thành các thay đổi có thể kiểm thử. Nhưng cần trực tiếp triển khai trong dự án, không chỉ đề xuất giải pháp.
+
+---
+
+# PHẦN 16. KẾT QUẢ CUỐI CÙNG MONG MUỐN
+
+Sau khi hoàn thiện, Library phải có:
+
+- Trang thư viện đẹp và nhất quán.
+- Kho tài liệu có nội dung thực chất.
+- Hệ thống phân loại rõ ràng.
+- Tìm kiếm hiệu quả.
+- Tài liệu nổi bật.
+- Bộ sưu tập học thuật.
+- Các tài liệu liên quan.
+- Trải nghiệm đọc tốt.
+- Thuật ngữ tương tác.
+- Câu hỏi gợi suy nghĩ.
+- Lưu tài liệu.
+- Ghi chú.
+- Tiến độ đọc.
+- Kết nối Concept Lab.
+- Kết nối Debate Lab.
+- Quản lý nội dung trong Admin.
+- Responsive và accessibility.
+- Dữ liệu có nguồn minh bạch.
+
+**KHÔNG ĐƯỢC CHỈ TẠO GIAO DIỆN ĐẸP NHƯNG NỘI DUNG VÀ CHỨC NĂNG RỖNG.**
+
+Mọi card phải dẫn đến tài liệu thật hoặc được đánh dấu rõ trạng thái chưa xuất bản.
+
+Mọi danh mục hiển thị cho người dùng phải có nội dung phù hợp.
+
+Mọi chức năng tương tác phải hoạt động thực tế hoặc được báo cáo rõ là chưa hoàn thành.
+
+## BÁO CÁO SAU TRIỂN KHAI
+
+Cung cấp:
+
+1. Những chức năng đã giữ nguyên.
+2. Những chức năng được nâng cấp.
+3. Số tài liệu hiện có sau cập nhật.
+4. Số tài liệu đã kiểm chứng nguồn.
+5. Danh sách danh mục.
+6. Các bộ sưu tập đã tạo.
+7. Các file đã sửa.
+8. Các chức năng đã kiểm thử.
+9. Những lỗi đã xử lý.
+10. Những phần còn cần hoàn thiện.
+
+## NGUYÊN TẮC THÀNH CÔNG
+
+Không đánh giá Library chỉ dựa vào số lượng bài viết.
+
+Một Library tốt phải giúp người học:
+
+- Tìm được tri thức.
+- Hiểu nội dung.
+- Nhận ra những câu hỏi quan trọng.
+- Phân tích nhiều góc nhìn.
+- Đối thoại về điều đã đọc.
+- Tự hình thành nhận định có căn cứ.
+
+**MẠCH NGÔN KHÔNG CHỈ LÀ NƠI ĐỌC TRI THỨC, MÀ LÀ NƠI TRI THỨC TRỞ THÀNH ĐIỂM KHỞI ĐẦU CỦA TƯ DUY.**
+
+Hãy bắt đầu kiểm tra mã nguồn hiện tại và trực tiếp hoàn thiện Library theo các yêu cầu trên.
