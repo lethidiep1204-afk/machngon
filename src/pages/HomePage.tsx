@@ -102,10 +102,14 @@ export function HomePage() {
 
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <Link
-                    to={user.isAuthenticated ? '/dashboard' : '/onboarding'}
+                    to={
+                      user.isAuthenticated
+                        ? '/dashboard'
+                        : '/auth?mode=register&redirect=%2Fonboarding'
+                    }
                     className="btn-primary px-6"
                   >
-                    Bắt đầu ngay
+                    {user.isAuthenticated ? 'Tiếp tục học tập' : 'Bắt đầu ngay'}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                   <Link to="/guide" className="btn-secondary">

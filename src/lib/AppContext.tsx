@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { DEFAULT_LIBRARY_CATEGORIES } from '../data/library/categories';
-import { DEFAULT_LIBRARY_COLLECTIONS } from '../data/library/collections';
-import { SEED_DOCUMENTS } from '../data/seedDocuments';
+import { DEFAULT_LIBRARY_CATEGORIES } from '../content/library/categories';
+import { DEFAULT_LIBRARY_COLLECTIONS } from '../content/library/collections';
+import { SEED_DOCUMENTS } from '../content/seedDocuments';
 import { normalizeCategoryName } from './library/validation';
 import {
   LayoutPreferences,
@@ -42,6 +42,9 @@ interface AppContextValue {
   publishedDocuments: LibraryDocument[];
   upsertAdminDocument: (doc: LibraryDocument) => void;
   deleteAdminDocument: (id: string) => void;
+
+  adminSessionToken: string | null;
+  setAdminSessionToken: (token: string | null) => void;
 
   categories: LibraryCategoryMeta[];
   visibleCategories: LibraryCategoryMeta[];
@@ -91,9 +94,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [notes, setNotes] = useState<ReadingNote[]>(() => loadReadingNotes());
   const [sessions, setSessions] = useState<LabSession[]>(() => loadLabSessions());
   const [layoutPrefs, setLayoutPrefs] = useState<LayoutPreferences>(() => loadLayoutPrefs());
+  // Kept strictly in React memory (never localStorage/sessionStorage)
+  const [adminSessionToken, setAdminSessionToken] = useState<string | null>(null);
 
   useEffect(() => saveUserProfile(user), [user]);
   useEffect(() => saveCustomAdminDocs(customDocs), [customDocs]);
+  useEffect(() => {
+    if (!adminSessionToken) return;
+    const controller = new AbortController();
+    fetch('/api/knowledge/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminSessionToken}`,
+      },
+      body: JSON.stringify({ documents: customDocs }),
+      signal: controller.signal,
+    }).catch(() => {
+      // Ignore transient network or abort errors during background RAG sync
+    });
+    return () => controller.abort();
+  }, [customDocs, adminSessionToken]);
   useEffect(() => saveCustomCategories(categories), [categories]);
   useEffect(() => saveCustomCollections(collections), [collections]);
   useEffect(() => saveSavedDocIds(savedDocIds), [savedDocIds]);
@@ -334,6 +355,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         publishedDocuments,
         upsertAdminDocument,
         deleteAdminDocument,
+        adminSessionToken,
+        setAdminSessionToken,
         categories: sortedCategories,
         visibleCategories,
         upsertCategory,

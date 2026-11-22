@@ -6,7 +6,7 @@ import {
   QUOTE_CATEGORIES,
   QuoteCategory,
   VERIFIED_SEED_QUOTES,
-} from '../data/verifiedQuotes.ts';
+} from '../content/verifiedQuotes.ts';
 
 export const VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
 

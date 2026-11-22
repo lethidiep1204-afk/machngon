@@ -7,7 +7,7 @@ import {
   DailyQuote,
   QUOTE_CATEGORIES,
   VERIFIED_SEED_QUOTES,
-} from '../data/verifiedQuotes.ts';
+} from '../content/verifiedQuotes.ts';
 import {
   DailyQuoteService,
   getNextVietnamMidnightIso,

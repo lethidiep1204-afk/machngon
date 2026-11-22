@@ -17,6 +17,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useApp } from '../../lib/AppContext';
 import { Link, useRouter } from '../../lib/router';
 import { useTheme } from '../theme/ThemeProvider';
+import { useToast } from '../ui/ToastProvider';
 import { BrandLogo } from '../brand/BrandLogo';
 
 interface NavItem {
@@ -46,10 +47,18 @@ const MOBILE_BOTTOM_NAV: NavItem[] = [
 ];
 
 export function PublicHeader() {
-  const { user } = useApp();
+  const { user, signOut } = useApp();
   const { pathname, navigate } = useRouter();
   const { setPaletteModalOpen } = useTheme();
+  const { showToast } = useToast();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleSignOut = () => {
+    setMobileMenuOpen(false);
+    signOut();
+    showToast('Bạn đã đăng xuất khỏi Mạch Ngôn.', { variant: 'info' });
+    navigate('/');
+  };
 
   const handleAnchorNav = (sectionId: string, fallbackRoute: string) => {
     setMobileMenuOpen(false);
@@ -104,24 +113,67 @@ export function PublicHeader() {
           </button>
         </nav>
 
-        {/* Zone 3: Right Actions (Đăng nhập + Bắt đầu) */}
+        {/* Zone 3: Right Actions — Auth-aware */}
         <div className="flex items-center gap-2.5 shrink-0">
           <span
             aria-hidden="true"
             className="hidden md:block h-4 w-px bg-[var(--color-border)] mr-1"
           />
-          <Link
-            to="/auth"
-            className="hidden sm:inline-flex btn-secondary !min-h-10 !px-4 !text-sm"
-          >
-            Đăng nhập
-          </Link>
-          <Link
-            to={user.isAuthenticated ? '/dashboard' : '/onboarding'}
-            className="hidden sm:inline-flex btn-primary !min-h-10 !px-4 !text-sm"
-          >
-            Bắt đầu
-          </Link>
+          {user.isAuthenticated ? (
+            <>
+              <Link
+                to="/profile"
+                title={`Hồ sơ: ${user.name}`}
+                className="hidden lg:inline-flex items-center gap-2 rounded-xl px-2.5 py-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/45 transition-colors max-w-[190px]"
+              >
+                <span
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-display text-xs font-semibold border border-[var(--color-border)]"
+                  style={{
+                    backgroundColor:
+                      'color-mix(in srgb, var(--color-primary) 12%, var(--color-bg) 88%)',
+                    color: 'var(--color-primary)',
+                  }}
+                >
+                  {user.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="text-xs font-semibold text-[var(--color-text)] truncate">
+                  {user.name}
+                </span>
+              </Link>
+              <Link
+                to="/dashboard"
+                className="hidden sm:inline-flex btn-primary !min-h-10 !px-3.5 !text-sm"
+              >
+                <LayoutDashboard className="h-4 w-4 shrink-0" />
+                <span className="hidden xl:inline">Vào không gian học tập</span>
+                <span className="xl:hidden">Tổng quan</span>
+              </Link>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                aria-label="Đăng xuất"
+                className="hidden sm:inline-flex btn-secondary !min-h-10 !px-3 !text-sm"
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span className="hidden md:inline">Đăng xuất</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/auth"
+                className="hidden sm:inline-flex btn-secondary !min-h-10 !px-4 !text-sm"
+              >
+                Đăng nhập
+              </Link>
+              <Link
+                to="/auth?mode=register&redirect=%2Fonboarding"
+                className="hidden sm:inline-flex btn-primary !min-h-10 !px-4 !text-sm"
+              >
+                Bắt đầu
+              </Link>
+            </>
+          )}
           <button
             type="button"
             onClick={() => setMobileMenuOpen((v) => !v)}
@@ -183,21 +235,69 @@ export function PublicHeader() {
                 <Palette className="h-4 w-4 text-[var(--color-primary)]" />
                 Đổi bảng màu đọc sách
               </button>
-              <div className="mt-2 pt-3 border-t border-[var(--color-border)] grid grid-cols-2 gap-2.5">
-                <Link
-                  to="/auth"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="btn-secondary min-h-11 text-sm"
-                >
-                  Đăng nhập
-                </Link>
-                <Link
-                  to={user.isAuthenticated ? '/dashboard' : '/onboarding'}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="btn-primary min-h-11 text-sm"
-                >
-                  Bắt đầu
-                </Link>
+              <div className="mt-2 pt-3 border-t border-[var(--color-border)]">
+                {user.isAuthenticated ? (
+                  <div className="space-y-2.5">
+                    <Link
+                      to="/profile"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="flex items-center gap-3 rounded-xl px-3 py-2.5 border border-[var(--color-border)] bg-[var(--color-bg)]/60"
+                    >
+                      <span
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-semibold border border-[var(--color-border)]"
+                        style={{
+                          backgroundColor:
+                            'color-mix(in srgb, var(--color-primary) 12%, var(--color-bg) 88%)',
+                          color: 'var(--color-primary)',
+                        }}
+                      >
+                        {user.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[var(--color-text)] truncate">
+                          {user.name}
+                        </div>
+                        <div className="text-xs text-[var(--color-text-muted)] truncate">
+                          {user.email}
+                        </div>
+                      </div>
+                    </Link>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <Link
+                        to="/dashboard"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="btn-primary min-h-11 text-sm"
+                      >
+                        Tổng quan
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={handleSignOut}
+                        className="btn-secondary min-h-11 text-sm"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        Đăng xuất
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <Link
+                      to="/auth"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="btn-secondary min-h-11 text-sm"
+                    >
+                      Đăng nhập
+                    </Link>
+                    <Link
+                      to="/auth?mode=register&redirect=%2Fonboarding"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="btn-primary min-h-11 text-sm"
+                    >
+                      Bắt đầu
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
           </motion.nav>

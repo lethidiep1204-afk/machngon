@@ -5,20 +5,31 @@ import { LabSession, LedgerEntry } from '../../lib/types';
 interface ArgumentLedgerProps {
   session: LabSession;
   onQuoteEntry: (entry: LedgerEntry) => void;
+  hideTitle?: boolean;
 }
 
-export function ArgumentLedger({ session, onQuoteEntry }: ArgumentLedgerProps) {
+export function ArgumentLedger({
+  session,
+  onQuoteEntry,
+  hideTitle = false,
+}: ArgumentLedgerProps) {
   return (
     <div className="space-y-5">
-      <div className="pb-3.5 border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-2 font-display text-base font-semibold text-[var(--color-text)]">
-          <BookMarked className="h-4 w-4 text-[var(--color-primary)] shrink-0" />
-          <h2>Sổ tay mạch lập luận</h2>
-        </div>
-        <p className="mt-1.5 text-xs leading-[1.6] text-[var(--color-text-muted)]">
+      {hideTitle ? (
+        <p className="text-xs leading-[1.6] text-[var(--color-text-muted)]">
           Tóm tắt ngắn từng lượt trao đổi (U#n của bạn · A#n của AI) và những điều đang ngầm giả định để dễ đối chiếu.
         </p>
-      </div>
+      ) : (
+        <div className="pb-3.5 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-2 font-display text-base font-semibold text-[var(--color-text)]">
+            <BookMarked className="h-4 w-4 text-[var(--color-primary)] shrink-0" />
+            <h2>Sổ tay mạch lập luận</h2>
+          </div>
+          <p className="mt-1.5 text-xs leading-[1.6] text-[var(--color-text-muted)]">
+            Tóm tắt ngắn từng lượt trao đổi (U#n của bạn · A#n của AI) và những điều đang ngầm giả định để dễ đối chiếu.
+          </p>
+        </div>
+      )}
 
       {/* Core Assumptions */}
       <section className="rounded-xl p-4 surface-subtle">

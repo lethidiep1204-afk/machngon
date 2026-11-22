@@ -1,4 +1,4 @@
-import { LIBRARY_CONCEPTS } from '../../data/library/concepts.ts';
+import { LIBRARY_CONCEPTS } from '../../content/library/concepts.ts';
 import type { LibraryConcept, LibraryDocument } from '../types.ts';
 
 /**

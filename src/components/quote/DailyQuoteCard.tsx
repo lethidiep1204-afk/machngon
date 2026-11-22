@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, ExternalLink, Feather, Sparkles } from 'lucide-react';
-import type { DailyQuote } from '../../data/verifiedQuotes';
+import type { DailyQuote } from '../../content/verifiedQuotes';
 import { useToast } from '../ui/ToastProvider';
 
 interface DailyQuoteApiPayload {

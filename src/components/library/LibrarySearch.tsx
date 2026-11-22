@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, BookOpen, Lightbulb, Search, X } from 'lucide-react';
-import { LIBRARY_CONCEPTS } from '../../data/library/concepts';
+import { LIBRARY_CONCEPTS } from '../../content/library/concepts';
 import {
   getSearchSuggestions,
   LIBRARY_SUGGESTED_KEYWORDS,

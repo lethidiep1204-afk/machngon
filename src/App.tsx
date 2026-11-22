@@ -1,9 +1,15 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { PaletteQuickModal } from './components/theme/PaletteQuickModal';
 import { ThemeProvider } from './components/theme/ThemeProvider';
-import { ToastProvider } from './components/ui/ToastProvider';
-import { AppProvider } from './lib/AppContext';
+import { ToastProvider, useToast } from './components/ui/ToastProvider';
+import { AppProvider, useApp } from './lib/AppContext';
+import {
+  AUTH_REQUIRED_NOTICE,
+  buildAuthRedirectUrl,
+  isProtectedRoute,
+  normalizeRoutePath,
+} from './lib/authGuard';
 import { RouterProvider, useRouter } from './lib/router';
 import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -20,12 +26,38 @@ import { ProfilePage } from './pages/ProfilePage';
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 function RouteView() {
-  const { pathname } = useRouter();
-  const normalizedPath = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
+  const { pathname, search, navigate } = useRouter();
+  const { user } = useApp();
+  const { showToast } = useToast();
+  const lastRedirectKeyRef = useRef<string | null>(null);
+
+  const normalizedPath = normalizeRoutePath(pathname);
+  const blockedByAuth = !user.isAuthenticated && isProtectedRoute(normalizedPath);
+
+  useEffect(() => {
+    if (!blockedByAuth) {
+      lastRedirectKeyRef.current = null;
+      return;
+    }
+
+    const redirectKey = `${normalizedPath}${search}`;
+    if (lastRedirectKeyRef.current !== redirectKey) {
+      lastRedirectKeyRef.current = redirectKey;
+      showToast(AUTH_REQUIRED_NOTICE, { variant: 'info' });
+    }
+    navigate(buildAuthRedirectUrl(normalizedPath, search), { replace: true });
+  }, [blockedByAuth, normalizedPath, search, navigate, showToast]);
 
   let pageNode: React.ReactNode;
 
-  if (normalizedPath === '/') {
+  if (blockedByAuth) {
+    pageNode = (
+      <AuthPage
+        forcedReason="auth_required"
+        forcedRedirect={`${normalizedPath}${search}`}
+      />
+    );
+  } else if (normalizedPath === '/') {
     pageNode = <HomePage />;
   } else if (normalizedPath === '/auth') {
     pageNode = <AuthPage />;
@@ -64,7 +96,7 @@ function RouteView() {
 
   return (
     <motion.div
-      key={normalizedPath}
+      key={blockedByAuth ? '/auth' : normalizedPath}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}

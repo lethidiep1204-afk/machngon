@@ -2,8 +2,8 @@ import 'dotenv/config';
 import express, { type Express } from 'express';
 import { executeDebateEngine } from '../lib/ai/debateEngine.ts';
 import type { LabApiRequestPayload } from '../lib/types.ts';
-import { SEED_DOCUMENTS } from '../data/seedDocuments.ts';
-import { QUOTE_CATEGORIES } from '../data/verifiedQuotes.ts';
+import { SEED_DOCUMENTS } from '../content/seedDocuments.ts';
+import { QUOTE_CATEGORIES } from '../content/verifiedQuotes.ts';
 import {
   dailyQuoteService,
   getVietnamDateKey,
@@ -14,6 +14,7 @@ import {
   extractBearerToken,
   requireAdmin,
 } from './adminAuth.ts';
+import generateHandler from '../../api/generate.js';
 
 // Lightweight per-session sliding window rate limiter (protects /api/lab & /api/admin/auth)
 const requestBuckets = new Map<string, number[]>();
@@ -62,6 +63,13 @@ export function createApiApp(): Express {
       timezone: VIETNAM_TIMEZONE,
       vietnamDate: getVietnamDateKey(),
     });
+  });
+
+  // =========================================================================
+  // SECURE GEMINI PROXY (/api/generate — shared with Vercel Serverless Function)
+  // =========================================================================
+  app.all('/api/generate', async (req, res) => {
+    await generateHandler(req, res);
   });
 
   // =========================================================================

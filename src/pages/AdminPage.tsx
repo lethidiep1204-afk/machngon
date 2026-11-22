@@ -30,7 +30,7 @@ import {
   DailyQuote,
   QUOTE_CATEGORIES,
   QuoteCategory,
-} from '../data/verifiedQuotes';
+} from '../content/verifiedQuotes';
 import { useApp } from '../lib/AppContext';
 import { matchesVietnameseQuery } from '../lib/vietnamese';
 
@@ -101,12 +101,18 @@ const QUOTES_PAGE_SIZE = 10;
  *   + Expanded Library Console (Articles + Categories + Collections) + System overview.
  */
 export default function AdminPage() {
-  const { user, documents, sessions, notes } = useApp();
+  const {
+    user,
+    documents,
+    sessions,
+    notes,
+    adminSessionToken: adminToken,
+    setAdminSessionToken: setAdminToken,
+  } = useApp();
   const { showToast } = useToast();
 
   // Admin auth state — Bearer token stored ONLY in React memory (never localStorage/sessionStorage)
   const [authStatus, setAuthStatus] = useState<AdminAuthStatus | null>(null);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [confirmPasscodeInput, setConfirmPasscodeInput] = useState('');
   const [authBusy, setAuthBusy] = useState(false);

@@ -1,17 +1,29 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Eye, EyeOff, KeyRound, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowLeft, Eye, EyeOff, KeyRound, Lock, X } from 'lucide-react';
 import { BrandLogo } from '../components/brand/BrandLogo';
 import { useToast } from '../components/ui/ToastProvider';
 import { HybridMediaCard } from '../components/visuals/ThemeSyncedHero';
 import { useApp } from '../lib/AppContext';
 import { EDITORIAL_IMAGES } from '../lib/assets';
-import { Link, useRouter } from '../lib/router';
+import { AUTH_REQUIRED_MESSAGE, sanitizeRedirectPath } from '../lib/authGuard';
+import { Link, useRouter, useSearchParams } from '../lib/router';
 
-export function AuthPage() {
+interface AuthPageProps {
+  forcedReason?: string;
+  forcedRedirect?: string;
+}
+
+export function AuthPage({ forcedReason, forcedRedirect }: AuthPageProps = {}) {
   const { signIn, user } = useApp();
   const { showToast } = useToast();
   const { navigate } = useRouter();
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const searchParams = useSearchParams();
+  const initialMode = searchParams.get('mode') === 'register' ? 'register' : 'login';
+  const redirectParam = forcedRedirect ?? searchParams.get('redirect');
+  const authReason = forcedReason ?? searchParams.get('reason');
+  const isAuthRequiredNotice = authReason === 'auth_required';
+
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -22,6 +34,13 @@ export function AuthPage() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+
+  useEffect(() => {
+    const queryMode = searchParams.get('mode');
+    if (queryMode === 'register' || queryMode === 'login') {
+      setMode(queryMode);
+    }
+  }, [searchParams]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,20 +70,31 @@ export function AuthPage() {
       }
     }
 
+    const destination = redirectParam
+      ? sanitizeRedirectPath(redirectParam, '/dashboard')
+      : mode === 'register'
+        ? '/onboarding'
+        : '/dashboard';
+
     signIn(trimmedEmail, mode === 'register' ? name : user.name);
     showToast(
       mode === 'register'
-        ? 'Đăng ký tài khoản thành công! Hãy hoàn tất 5 câu khảo sát sở thích học tập.'
+        ? 'Đăng ký tài khoản thành công! Chào mừng bạn đến với Mạch Ngôn.'
         : 'Chào mừng bạn quay lại thư phòng Mạch Ngôn.',
       { variant: 'success' }
     );
-    navigate(mode === 'register' ? '/onboarding' : '/dashboard');
+    navigate(destination, { replace: true });
   };
 
   const handleGoogleContinue = () => {
+    const destination = redirectParam
+      ? sanitizeRedirectPath(redirectParam, '/dashboard')
+      : user.onboardingCompleted
+        ? '/dashboard'
+        : '/onboarding';
     signIn(user.email || 'lanphuong@machngon.edu.vn', user.name || 'Lan Phương');
     showToast('Đã đăng nhập bằng hồ sơ học viên.', { variant: 'success' });
-    navigate(user.onboardingCompleted ? '/dashboard' : '/onboarding');
+    navigate(destination, { replace: true });
   };
 
   const handleForgotSubmit = (e: React.FormEvent) => {
@@ -171,6 +201,33 @@ export function AuthPage() {
                 ? 'Tiếp tục các bài đọc dở dang và sổ tay mạch lập luận của bạn.'
                 : 'Tạo tài khoản cá nhân để lưu ghi chú đọc sâu và tùy chỉnh không gian học tập.'}
             </p>
+
+            {isAuthRequiredNotice && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mt-4 flex items-start gap-2.5 rounded-xl px-4 py-3 text-sm border"
+                style={{
+                  backgroundColor:
+                    'color-mix(in srgb, var(--color-primary) 7%, var(--color-surface) 93%)',
+                  borderColor:
+                    'color-mix(in srgb, var(--color-primary) 28%, var(--color-border) 72%)',
+                  color: 'var(--color-text)',
+                }}
+              >
+                <Lock className="h-4 w-4 shrink-0 mt-0.5 text-[var(--color-primary)]" />
+                <div className="min-w-0">
+                  <p className="font-medium text-[var(--color-text)]">
+                    {AUTH_REQUIRED_MESSAGE}
+                  </p>
+                  {redirectParam && (
+                    <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                      Sau khi đăng nhập, bạn sẽ được đưa thẳng tới trang vừa chọn.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {error && (
               <div

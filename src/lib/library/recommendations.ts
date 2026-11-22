@@ -1,4 +1,4 @@
-import { LIBRARY_CONCEPTS } from '../../data/library/concepts.ts';
+import { LIBRARY_CONCEPTS } from '../../content/library/concepts.ts';
 import type { ReadingScrollState } from '../storage.ts';
 import type { LibraryConcept, LibraryDocument, UserProfile } from '../types.ts';
 import { normalizeVietnameseText, scoreDocumentMatch } from './search.ts';

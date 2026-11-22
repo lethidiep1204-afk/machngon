@@ -1,4 +1,4 @@
-import { LEGACY_CATEGORY_MAP } from '../../data/library/categories.ts';
+import { LEGACY_CATEGORY_MAP } from '../../content/library/categories.ts';
 import type { DocumentBlock, DocumentCategory, LibraryDocument } from '../types.ts';
 
 /**

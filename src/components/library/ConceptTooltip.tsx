@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { ArrowUpRight, BookOpen, Lightbulb, Sparkles, X } from 'lucide-react';
-import { LIBRARY_CONCEPTS } from '../../data/library/concepts';
+import { LIBRARY_CONCEPTS } from '../../content/library/concepts';
 import { Link, useRouter } from '../../lib/router';
 import { setLabHandoff } from '../../lib/storage';
 import { LibraryConcept, LibraryDocument } from '../../lib/types';

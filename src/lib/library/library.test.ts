@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SEED_DOCUMENTS, DOCUMENT_CATEGORIES } from '../../data/seedDocuments.ts';
+import { SEED_DOCUMENTS, DOCUMENT_CATEGORIES } from '../../content/seedDocuments.ts';
 import {
   DEFAULT_LIBRARY_CATEGORIES,
   EDITORIAL_TOPIC_ROADMAP,
-} from '../../data/library/categories.ts';
-import { LIBRARY_CONCEPTS } from '../../data/library/concepts.ts';
-import { DEFAULT_LIBRARY_COLLECTIONS } from '../../data/library/collections.ts';
+} from '../../content/library/categories.ts';
+import { LIBRARY_CONCEPTS } from '../../content/library/concepts.ts';
+import { DEFAULT_LIBRARY_COLLECTIONS } from '../../content/library/collections.ts';
 import {
   estimateReadingMinutes,
   isDocumentVerified,

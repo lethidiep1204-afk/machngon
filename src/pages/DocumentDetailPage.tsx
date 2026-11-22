@@ -35,7 +35,7 @@ import { LibraryFontSizeControl } from '../components/library/LibraryFontSizeCon
 import { useToast } from '../components/ui/ToastProvider';
 import { ChapterDividerSvg } from '../components/visuals/EditorialSvgIllustrations';
 import { HybridMediaCard } from '../components/visuals/ThemeSyncedHero';
-import { LIBRARY_CONCEPTS } from '../data/library/concepts';
+import { LIBRARY_CONCEPTS } from '../content/library/concepts';
 import { useApp } from '../lib/AppContext';
 import { getRelatedDocuments } from '../lib/library/recommendations';
 import {
