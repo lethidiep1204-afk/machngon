@@ -311,3 +311,7 @@ kbd{font:12px ui-monospace,monospace;background:var(--bg2);border:1px solid var(
 .pwwrap{position:relative}.pwwrap button{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;background:none;color:var(--mute);font-size:13px}
 .orline{display:flex;align-items:center;gap:10px;color:var(--mute);font-size:13px;margin:16px 0}.orline::before,.orline::after{content:"";flex:1;height:1px;background:var(--line)}
 @media(max-width:860px){.authWrap{grid-template-columns:1fr}.authArt{min-height:200px}}
+.srcList{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--bg2);font-size:13px;font-family:var(--sans)}
+.srcList ol{margin:6px 0 0;padding-left:20px}.srcList li{margin:3px 0;word-break:break-word}
+.srcList a{color:var(--brand);text-decoration:underline}
+.gsugg{width:100%;height:64px;border:0;margin-top:8px;border-radius:10px;background:transparent}

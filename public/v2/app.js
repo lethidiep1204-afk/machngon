@@ -153,9 +153,11 @@ const ALIASES = [
 const STEPS = {
   debate:['Nêu lập trường','Soi giả định & bằng chứng','Đối diện phản ví dụ','Điều chỉnh lập luận','Tổng kết tiến bộ'],
   concept:['Cách hiểu ban đầu','Đặc điểm cốt lõi','Ví dụ & phản ví dụ','Tinh chỉnh ranh giới','Hoàn thiện định nghĩa'],
-  read:['Xác định thể loại','Đọc chi tiết','Tìm quy luật nghệ thuật','Diễn giải có căn cứ','Viết đoạn cảm nhận']
+  read:['Xác định thể loại','Đọc chi tiết','Tìm quy luật nghệ thuật','Diễn giải có căn cứ','Viết đoạn cảm nhận'],
+  ask:['Đặt câu hỏi','Đọc câu trả lời','Mở nguồn kiểm chứng','Hỏi sâu hơn','Ghi vào sổ tay']
 };
 const MODES = {
+  ask:{n:'Hỏi đáp có nguồn',ph:'Hỏi về tác giả, tác phẩm, hoàn cảnh sáng tác, khái niệm… Ví dụ: “Chí Phèo được in lần đầu năm nào, với tên gì?”',intro:'AI Gemini của Google trả lời trực tiếp, ưu tiên tư liệu đã đối chiếu nguồn trong thư viện Mạch Ngôn và tra cứu Google Search. Mỗi câu trả lời kèm danh sách nguồn để em tự mở ra kiểm chứng.'},
   debate:{n:'Tranh biện',ph:'Viết lập trường của bạn (ít nhất 3 câu: luận điểm, lí do, dẫn chứng)… Enter để gửi, Shift+Enter xuống dòng.',intro:'Nêu một quan điểm. AI ghi nhận điểm mạnh, chỉ ra đúng 1 điểm hở và hỏi 1 câu Socrates. Bạn tự sửa lập luận qua 5 bước.'},
   concept:{n:'Làm rõ khái niệm',ph:'Nhập khái niệm và cách hiểu của bạn, ví dụ: “Tình huống truyện là…”',intro:'Bạn tự định nghĩa một khái niệm, AI giúp bạn thử ranh giới của định nghĩa bằng ví dụ và phản ví dụ.'},
   read:{n:'Đọc văn bản văn học',ph:'Dán đoạn trích (thơ/truyện/kịch/kí) hoặc nêu cảm nhận của bạn về một chi tiết…',intro:'Đọc theo đặc trưng thể loại: AI không bình giảng hộ mà dẫn bạn tự phát hiện chi tiết, quy luật nghệ thuật và ý nghĩa.'},
@@ -206,8 +208,21 @@ function initAI(){
   }catch(e){ aiState='off'; }
 }
 /* AI qua máy chủ của trang (api/generate trên Vercel) */
-async function serverAI(input, signal){
+let lastAIMeta=null;
+async function serverAI(input, signal, opts={}){
   const text=Array.isArray(input)?input.map(m=>(m.role==='user'?'HỌC SINH':'TRỢ LÝ')+': '+m.content).join('\n\n'):String(input);
+  lastAIMeta=null;
+  if(!S.get('noAskAPI',false)){
+    let r=null; try{ r=await fetch('/api/v2-ask',{method:'POST',headers:{'Content-Type':'application/json'},signal,
+      body:JSON.stringify({messages:Array.isArray(input)?input:[{role:'user',content:text}],search:opts.search!==false})}); }
+    catch(e){ if(e&&e.name==='AbortError') throw e; r=null; }
+    if(r && r.status!==404){
+      let d={}; try{ d=await r.json(); }catch(e){}
+      if(r.ok && d.text){ lastAIMeta={grounded:!!d.grounded,sources:d.sources||[],queries:d.queries||[],html:d.suggestionsHtml||'',model:d.model||'Gemini'}; return d.text; }
+      throw {code:r.status===429?'rate_limited':'server',message:d.error||('Máy chủ AI trả lỗi '+r.status)};
+    }
+    if(r && r.status===404) S.set('noAskAPI',true);
+  }
   let r; try{ r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},signal,
     body:JSON.stringify({prompt:text,message:text,contents:[{role:'user',parts:[{text}]}],messages:Array.isArray(input)?input:[{role:'user',content:text}]})}); }
   catch(e){ throw {code:'server',message:'Không kết nối được máy chủ AI.'}; }
@@ -223,17 +238,17 @@ function refreshAIPill(){ $$('.aipill').forEach(el=>el.outerHTML=aiPill()); }
 function aiPill(){
   if(aiState==='on') return '<span class="pill aipill" title="Phản hồi do Claude tạo"><span class="dot on"></span>AI: Claude đang sẵn sàng</span>';
   if(aiState==='checking') return '<span class="pill aipill"><span class="dot"></span>Đang kết nối AI…</span>';
-  if(aiState==='server') return '<span class="pill aipill" title="Gọi AI qua máy chủ của trang (api/generate)"><span class="dot on"></span>AI: máy chủ Mạch Ngôn</span>';
+  if(aiState==='server') return '<span class="pill aipill" title="Gọi Gemini của Google qua máy chủ của trang, có tra cứu Google Search và ghi nguồn"><span class="dot on"></span>AI: Gemini (Google) có tra cứu</span>';
   return '<span class="pill aipill" title="Không kết nối được AI trong môi trường này. Mạch Ngôn dùng bộ phân tích theo quy tắc."><span class="dot off"></span>Chế độ cục bộ (không có AI)</span>';
 }
-async function askAI(prompt, onText, signal){
-  if(!sample && aiState==='server'){ const t=await serverAI(prompt, signal); if(onText) onText(t); return t; }
+async function askAI(prompt, onText, signal, opts){
+  if(!sample && aiState==='server'){ const t=await serverAI(prompt, signal, opts); if(onText) onText(t); return t; }
   if(!sample) throw {code:'unavailable',message:'AI chưa sẵn sàng'};
   const r = await sample(prompt, {onText:onText?({text})=>onText(text):undefined, cache:false, signal});
   return r.text;
 }
 async function askAIJSON(prompt){
-  if(!sample && aiState==='server'){ const t=await serverAI(prompt); const m=t.match(/\{[\s\S]*\}/); if(!m) throw {code:'parse'}; return JSON.parse(m[0]); }
+  if(!sample && aiState==='server'){ const t=await serverAI(prompt, undefined, {search:false}); const m=t.match(/\{[\s\S]*\}/); if(!m) throw {code:'parse'}; return JSON.parse(m[0]); }
   if(!sample) throw {code:'unavailable'};
   try{ if(typeof sample.json==='function'){ const v=await sample.json(prompt,{cache:false}); if(v && typeof v==='object') return v; } }catch(e){ if(e && (e.code==='rate_limited'||e.code==='not_granted')) throw e; }
   const t=(await sample(prompt,{cache:false})).text; const m=t.match(/\{[\s\S]*\}/); if(!m) throw {code:'parse'}; return JSON.parse(m[0]);
@@ -345,6 +360,7 @@ function labPrompt(sess){
     concept:`Chế độ LÀM RÕ KHÁI NIỆM, bước ${step+1}/5 (${STEPS.concept.join(' → ')}). Bước hiện tại: "${STEPS.concept[step]}". Dùng ví dụ và phản ví dụ để thử ranh giới định nghĩa của học sinh.`,
     read:`Chế độ ĐỌC VĂN BẢN VĂN HỌC, bước ${step+1}/5 (${STEPS.read.join(' → ')}). Bước hiện tại: "${STEPS.read[step]}". Hướng học sinh đọc theo đặc trưng thể loại (thơ: hình ảnh, nhạc điệu, chủ thể trữ tình; truyện: người kể, điểm nhìn, tình huống, chi tiết; kịch: xung đột, lời thoại; kí: cái tôi tác giả, tính xác thực). Không bình giảng thay học sinh.`
   }[m];
+  if(m==='ask') return askPrompt(sess, rel);
   const head=`Bạn là "Trợ lý tư duy Mạch Ngôn" — nền tảng học tư duy ngôn ngữ cho học sinh THPT Việt Nam, đặc biệt môn Ngữ văn.
 NGUYÊN TẮC: Dạy theo phương pháp Socrates. KHÔNG viết bài hộ, KHÔNG đưa đáp án hoàn chỉnh, KHÔNG khen chung chung. Trả lời bằng tiếng Việt chuẩn, tối đa khoảng 170 chữ.
 ${modeTxt}
@@ -364,6 +380,31 @@ VỀ VĂN HỌC: Khi học sinh bàn về tác phẩm, yêu cầu bám chi tiế
 AN TOÀN: Nếu nội dung không phù hợp lứa tuổi học sinh, nhẹ nhàng đưa cuộc trò chuyện về chủ đề học tập.`;
   const conv=sess.msgs.filter(x=>x.r!=='sys').map(x=>({role:x.r==='u'?'user':'assistant',content:x.t}));
   conv[0]={role:'user',content:head+'\n\n---\nLƯỢT ĐẦU CỦA HỌC SINH:\n'+conv[0].content};
+  return conv;
+}
+function docBrief(x){
+  const nl=(x.n||[]).slice(0,1).map(z=>`Ngữ liệu "${z.t}" (${z.src}):\n${z.txt.slice(0,900)}`).join('\n');
+  return `[[${x.i}]] ${x.t}\nTóm lược: ${x.s}\nÝ chính: ${x.k.join(' | ')}\n${nl}\nNguồn: ${(x.r||[]).join('; ')}`;
+}
+function askPrompt(sess, rel){
+  const docs=rel.slice(0,3);
+  const head=`Bạn là "Trợ lý hỏi đáp Mạch Ngôn" cho học sinh THPT Việt Nam (môn Ngữ văn và tư duy ngôn ngữ).
+NHIỆM VỤ: Trả lời TRỰC TIẾP, CHÍNH XÁC câu hỏi của học sinh. Trình độ: ${LV_TXT[sess.level]}
+QUY TẮC CHÍNH XÁC:
+1. Ưu tiên "Tư liệu thư viện Mạch Ngôn" bên dưới (đã đối chiếu nguồn). Với dữ kiện (năm, xuất xứ, tiểu sử, giải thưởng, dị bản), tra cứu Google Search và chỉ khẳng định điều có nguồn đáng tin.
+2. Nếu nguồn mâu thuẫn hoặc không đủ căn cứ, nói rõ "chưa đủ căn cứ để khẳng định" – không đoán.
+3. Không bịa trích dẫn. Chỉ trích câu thơ/văn khi chắc chắn và ngắn; nhắc đối chiếu SGK. Không chép dài tác phẩm còn bản quyền.
+4. Câu hỏi diễn giải (ý nghĩa, giá trị) thì nêu các cách hiểu phổ biến, phân biệt "dữ kiện" với "diễn giải".
+ĐỊNH DẠNG (Markdown, tối đa khoảng 250 chữ):
+### Trả lời
+### Căn cứ
+(Nêu ngắn căn cứ: bài thư viện bằng cú pháp [[mã-bài]] nếu dùng, và loại nguồn web đã dựa vào.)
+### Lưu ý kiểm chứng
+(1 câu: điểm nào em nên tự kiểm tra lại, hoặc ghi "Đã có nguồn thống nhất".)
+${docs.length?`\nTƯ LIỆU THƯ VIỆN MẠCH NGÔN:\n${docs.map(docBrief).join('\n---\n')}`:''}
+AN TOÀN: nội dung không phù hợp lứa tuổi thì nhẹ nhàng đưa về chủ đề học tập.`;
+  const conv=sess.msgs.filter(x=>x.r!=='sys').map(x=>({role:x.r==='u'?'user':'assistant',content:x.t}));
+  conv[0]={role:'user',content:head+'\n\n---\nCÂU HỎI CỦA HỌC SINH:\n'+conv[0].content};
   return conv;
 }
 function gradePrompt(text, topic){
@@ -789,13 +830,23 @@ function drawChat(){
   if(!LAB.msgs.length){ c.innerHTML=`<div class="card pad"><h3>${MODES[LAB.mode].n}</h3><p class="small">${MODES[LAB.mode].intro}</p>
     <div class="small muted">Gợi ý để bắt đầu:</div><div class="row" style="margin-top:6px">${starter(LAB.mode).map(s=>`<button class="btn sm" data-st="${esc(s)}">${esc(s.length>70?s.slice(0,68)+'…':s)}</button>`).join('')}</div></div>`;
     $$('[data-st]',c).forEach(b=>b.onclick=()=>{ $('#inp').value=b.dataset.st; $('#inp').focus(); $('#inp').dispatchEvent(new Event('input')); }); return; }
-  c.innerHTML=LAB.msgs.map((m,i)=>m.r==='u'?`<div class="msg u">${esc(m.t)}</div>`:`<div class="msg a">${md(m.t)}<div class="foot"><span>${m.local?'Chế độ cục bộ (phân tích theo quy tắc, không phải AI)':(m.src==='server'?'AI máy chủ Mạch Ngôn · AI có thể sai':'Claude · AI có thể sai')}</span><button data-flag="${i}">Báo chưa đúng</button><button data-note="${i}">Lưu vào sổ tay</button></div></div>`).join('');
+  c.innerHTML=LAB.msgs.map((m,i)=>m.r==='u'?`<div class="msg u">${esc(m.t)}</div>`:`<div class="msg a">${md(m.t)}${srcBlock(m)}<div class="foot"><span>${m.local?'Chế độ cục bộ (phân tích theo quy tắc, không phải AI)':(m.src==='server'?(m.meta&&m.meta.grounded?'Gemini (Google) · có tra cứu Google Search · hãy mở nguồn để kiểm chứng':'Gemini (Google) · AI có thể sai'):'Claude · AI có thể sai')}</span><button data-flag="${i}">Báo chưa đúng</button><button data-note="${i}">Lưu vào sổ tay</button></div></div>`).join('');
   $$('[data-flag]',c).forEach(b=>b.onclick=()=>flagAnswer(+b.dataset.flag));
   $$('[data-note]',c).forEach(b=>b.onclick=()=>{ S.push('labNotes',{t:Date.now(),q:LAB.msgs[+b.dataset.note-1]?.t||'',a:LAB.msgs[+b.dataset.note].t,mode:LAB.mode}); toast('Đã lưu vào Sổ tay'); });
+}
+function srcBlock(m){
+  const mt=m.meta; if(!mt) return '';
+  const src=(mt.sources||[]).filter(x=>/^https?:\/\//.test(x.uri));
+  let h='';
+  if(src.length) h+=`<div class="srcList"><b>Nguồn tra cứu</b><ol>${src.map(x=>`<li><a href="${esc(x.uri)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a></li>`).join('')}</ol></div>`;
+  else if(mt.grounded) h+=`<div class="srcList muted">Câu trả lời này không cần dẫn nguồn web; hãy đối chiếu với SGK và bài trong thư viện.</div>`;
+  if(mt.html) h+=`<iframe class="gsugg" title="Gợi ý tìm kiếm Google" sandbox="allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation" srcdoc="${esc(mt.html)}"></iframe>`;
+  return h;
 }
 function starter(m){
   return {debate:['Học sinh dùng AI để hỗ trợ viết bài luận luôn luôn làm giảm khả năng tư duy độc lập.','Em cho rằng Mị chạy theo A Phủ chỉ vì bản năng sống, không phải vì ý thức.','Văn học không có ích gì cho học sinh muốn theo khối tự nhiên.'],
     concept:['Tình huống truyện là sự việc chính của câu chuyện.','Ngụy biện là khi ai đó nói sai sự thật.','Hàm ngôn là những gì người nói muốn giấu.'],
+    ask:['Chí Phèo của Nam Cao được in lần đầu năm nào, với tên gì?','Vì sao nói Tản Đà là gạch nối giữa thơ trung đại và Thơ mới?','Hát nói khác thơ Đường luật ở những điểm nào?'],
     read:['Em thấy câu hỏi ở đầu bài Đây thôn Vĩ Dạ vừa như lời trách vừa như lời mời.','Trong Hai đứa trẻ, em chú ý chi tiết chuyến tàu đêm nhưng chưa hiểu vì sao nó quan trọng.','Bài Câu cá mùa thu: em không hiểu vì sao nói câu cá mà không thấy cá.']}[m]||[];
 }
 function flagAnswer(i){
@@ -816,11 +867,12 @@ async function send(){
   $('#send').disabled=true;
   let text='', local=false;
   if(sample || aiState==='server'){
-    try{ labAbort=new AbortController(); text=await askAI(labPrompt(LAB), tx=>{ holder.innerHTML=md(tx||''); }, labAbort.signal); }
+    try{ labAbort=new AbortController(); text=await askAI(labPrompt(LAB), tx=>{ holder.innerHTML=md(tx||''); }, labAbort.signal, {search:true}); }
     catch(e){ err.innerHTML=`<div class="notice err">${aiErrText(e)} <button class="btn sm" id="retryAI">Thử lại với AI</button></div>`; text=''; }
   } else if(aiState==='checking'){ await new Promise(r=>setTimeout(r,1200)); }
+  if(!text && LAB.mode==='ask'){ const rel=relatedDocs(t,4); text=`### Chưa kết nối được AI\nChế độ cục bộ không tự trả lời câu hỏi dữ kiện để tránh sai sót. ${rel.length?'Các bài trong thư viện có thể chứa câu trả lời:\n'+rel.map(x=>'- [['+x.i+']] '+x.t).join('\n'):'Em hãy thử tìm trong Thư viện hoặc Thuật ngữ.'}\n\nKhi trang chạy trên máy chủ có khóa Gemini, câu hỏi sẽ được trả lời kèm nguồn tra cứu.`; local=true; }
   if(!text){ text=localReply(t, LAB.mode, LAB.step); local=true; }
-  LAB.msgs.push({r:'a',t:text,local,src:local?'local':(sample?'claude':'server')});
+  LAB.msgs.push({r:'a',t:text,local,src:local?'local':(sample?'claude':'server'),meta:(!local&&!sample&&lastAIMeta)?lastAIMeta:undefined});
   LAB.step=Math.min(4,LAB.step+1); LAB.t=Date.now(); saveSession();
   $('#send').disabled=false;
   $$('.steps span').forEach((s,i)=>{ s.className=i<LAB.step?'done':i===LAB.step?'on':''; });
